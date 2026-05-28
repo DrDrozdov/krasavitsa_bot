@@ -58,10 +58,11 @@ main_menu = ReplyKeyboardMarkup(
 
 @dp.message(F.text == "/start")
 async def start(message: Message):
-        save_user(
+    save_user(
         user_id=message.from_user.id,
         username=message.from_user.username
     )
+
     text = (
         "Привет! Я «Красавица» — AI-помощник по подбору базового косметического ухода.\n\n"
         "Я могу подобрать не лекарственный уход, предложить категории средств и дать ссылки на маркетплейсы.\n\n"
