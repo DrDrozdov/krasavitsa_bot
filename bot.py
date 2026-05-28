@@ -1,4 +1,6 @@
 import os
+print("ALL ENV KEYS:", list(os.environ.keys()))
+print("BOT_TOKEN DEBUG:", os.getenv("BOT_TOKEN"))
 import asyncio
 
 
@@ -10,6 +12,11 @@ from links import make_market_links
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+print("BOT_TOKEN DEBUG:", BOT_TOKEN)
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN НЕ НАЙДЕН В RAILWAY VARIABLES")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
