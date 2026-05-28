@@ -5,11 +5,27 @@ import asyncio
 
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
 
 from ai_client import ask_deepseek
 from links import make_market_links
 
+from database import (
+    init_db,
+    save_user,
+    update_user_profile,
+    get_user_profile,
+    save_recommendation,
+    update_feedback,
+    get_last_recommendations
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -30,15 +46,22 @@ main_menu = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="🛒 Где искать"),
-            KeyboardButton(text="⚠️ Когда к врачу")
+            KeyboardButton(text="📖 Мои рекомендации")
         ],
-        [KeyboardButton(text="ℹ️ Помощь")]
+        [
+            KeyboardButton(text="⚠️ Когда к врачу"),
+            KeyboardButton(text="ℹ️ Помощь")
+        ],
     ],
     resize_keyboard=True
 )
 
 @dp.message(F.text == "/start")
 async def start(message: Message):
+        save_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username
+    )
     text = (
         "Привет! Я «Красавица» — AI-помощник по подбору базового косметического ухода.\n\n"
         "Я могу подобрать не лекарственный уход, предложить категории средств и дать ссылки на маркетплейсы.\n\n"
@@ -126,6 +149,46 @@ async def doctor_warning(message: Message):
 async def help_button(message: Message):
     await help_cmd(message)
 
+@dp.message(F.text == "📖 Мои рекомендации")
+async def my_recommendations(message: Message):
+    rows = get_last_recommendations(message.from_user.id)
+
+    if not rows:
+        await message.answer("Пока нет сохранённых рекомендаций.")
+        return
+
+    text = "📖 <b>Последние рекомендации</b>\n\n"
+
+    for index, row in enumerate(rows, start=1):
+        user_request, answer, feedback, created_at = row
+
+        text += f"<b>{index}. Запрос:</b> {user_request}\n"
+
+        if feedback:
+            text += f"<b>Оценка:</b> {feedback}\n"
+
+        text += "\n"
+
+    await message.answer(text, parse_mode="HTML")
+
+
+@dp.callback_query(F.data.startswith("feedback_good:"))
+async def feedback_good(callback: CallbackQuery):
+    rec_id = int(callback.data.split(":")[1])
+    update_feedback(rec_id, "good")
+
+    await callback.message.edit_text("Спасибо. Буду чаще учитывать такие рекомендации 👍")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("feedback_bad:"))
+async def feedback_bad(callback: CallbackQuery):
+    rec_id = int(callback.data.split(":")[1])
+    update_feedback(rec_id, "bad")
+
+    await callback.message.edit_text("Понял. Буду осторожнее с такими вариантами 👎")
+    await callback.answer()
+
 @dp.message(F.text)
 async def handle_text(message: Message):
     loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
@@ -183,7 +246,27 @@ async def handle_text(message: Message):
         if warning:
             answer += f"\n<b>Важно:</b>\n{warning}"
 
-        await message.answer(answer, parse_mode="HTML")
+        sent_answer = await message.answer(answer, parse_mode="HTML")
+
+        rec_id = save_recommendation(
+            user_id=message.from_user.id,
+            user_request=message.text,
+            answer=answer
+        )
+
+        feedback_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
+                    InlineKeyboardButton(text="👎 Не подошло", callback_data=f"feedback_bad:{rec_id}")
+                ]
+            ]
+        )
+
+        await message.answer(
+            "Оцени подбор — так «Красавица» станет точнее.",
+            reply_markup=feedback_keyboard
+        )
 
         if recommended_products:
             await message.answer("🛒 <b>Ссылки на поиск по каждому варианту:</b>", parse_mode="HTML")
@@ -266,6 +349,7 @@ async def handle_text(message: Message):
 
 
 async def main():
+    init_db()
     await dp.start_polling(bot)
 
 
