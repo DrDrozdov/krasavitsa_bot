@@ -186,26 +186,68 @@ async def handle_text(message: Message):
         await message.answer(answer, parse_mode="HTML")
 
         if recommended_products:
-            main_query = recommended_products[0].get("name", search_queries[0] if search_queries else "")
+            await message.answer("🛒 <b>Ссылки на поиск по каждому варианту:</b>", parse_mode="HTML")
+
+            for index, product in enumerate(recommended_products[:5], start=1):
+                product_name = product.get("name", "").strip()
+                product_category = product.get("category", "").strip()
+
+                if not product_name:
+                    continue
+
+                links = make_market_links(product_name)
+
+                buttons = [
+                    [
+                        InlineKeyboardButton(text="Яндекс", url=links["Яндекс Маркет"]),
+                        InlineKeyboardButton(text="Ozon", url=links["Ozon"]),
+                    ],
+                    [
+                        InlineKeyboardButton(text="WB", url=links["Wildberries"]),
+                        InlineKeyboardButton(text="ЗЯ", url=links["Золотое Яблоко"]),
+                    ],
+                    [
+                        InlineKeyboardButton(text="Лэтуаль", url=links["Лэтуаль"]),
+                        InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
+                    ],
+                ]
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+                text = f"🧴 <b>{index}. {product_name}</b>"
+
+                if product_category:
+                    text += f"\n<code>{product_category}</code>"
+
+                await message.answer(
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+
         elif search_queries:
             main_query = search_queries[0]
-        else:
-            main_query = ""
-
-        if main_query:
             links = make_market_links(main_query)
 
-            buttons = []
-
-            for name, url in links.items():
-                buttons.append(
-                    [InlineKeyboardButton(text=name, url=url)]
-                )
+            buttons = [
+                [
+                    InlineKeyboardButton(text="Яндекс", url=links["Яндекс Маркет"]),
+                    InlineKeyboardButton(text="Ozon", url=links["Ozon"]),
+                ],
+                [
+                    InlineKeyboardButton(text="WB", url=links["Wildberries"]),
+                    InlineKeyboardButton(text="ЗЯ", url=links["Золотое Яблоко"]),
+                ],
+                [
+                    InlineKeyboardButton(text="Лэтуаль", url=links["Лэтуаль"]),
+                    InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
+                ],
+            ]
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
             await message.answer(
-                f"🔎 Искать: <b>{main_query}</b>",
+                f"🔎 <b>Искать:</b> {main_query}",
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
