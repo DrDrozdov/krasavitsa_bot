@@ -13,7 +13,7 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 
 async def ask_deepseek(user_text: str) -> dict:
-    url = "https://api.deepseek.com/chat/completions"
+    url = "https://api.aitunnel.ru/v1/chat/completions"
 
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
