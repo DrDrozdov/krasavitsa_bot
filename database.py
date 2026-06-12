@@ -122,3 +122,34 @@ def get_last_recommendations(user_id: int, limit: int = 5):
     conn.close()
 
     return rows
+
+def save_feedback(rec_id, feedback):
+    conn = sqlite3.connect("beauty.db")
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE recommendations
+        SET feedback = ?
+        WHERE id = ?
+    """, (feedback, rec_id))
+
+    conn.commit()
+    conn.close()
+
+def get_user_recommendations(user_id: int, limit: int = 5):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT user_request, feedback, created_at
+        FROM recommendations
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+    """, (user_id, limit))
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return rows

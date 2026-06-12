@@ -23,7 +23,9 @@ from database import (
     update_user_profile,
     get_user_profile,
     save_recommendation,
+    get_user_recommendations,
     update_feedback,
+    save_feedback
     get_last_recommendations
 )
 
@@ -46,7 +48,7 @@ main_menu = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="🛒 Где искать"),
-            KeyboardButton(text="📖 Мои рекомендации")
+            KeyboardButton(text="📜 Мои подборы")
         ],
         [
             KeyboardButton(text="⚠️ Когда к врачу"),
@@ -189,6 +191,32 @@ async def feedback_bad(callback: CallbackQuery):
 
     await callback.message.edit_text("Понял. Буду осторожнее с такими вариантами 👎")
     await callback.answer()
+
+@dp.message(F.text == "📜 Мои подборы")
+async def my_recommendations(message: Message):
+    rows = get_user_recommendations(message.from_user.id)
+
+    if not rows:
+        await message.answer("У тебя пока нет сохранённых подборов 🌷")
+        return
+
+    text = "📜 <b>Последние подборы</b>\n\n"
+
+    for index, row in enumerate(rows, start=1):
+        user_request, feedback, created_at = row
+
+        text += f"<b>{index}. Запрос:</b> {user_request}\n"
+
+        if feedback == "good":
+            text += "Оценка: 👍 Полезно\n"
+        elif feedback == "bad":
+            text += "Оценка: 👎 Не подошло\n"
+        else:
+            text += "Оценка: пока нет\n"
+
+        text += "\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text)
 async def handle_text(message: Message):
@@ -356,3 +384,32 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+@dp.callback_query()
+async def handle_feedback(callback: CallbackQuery):
+
+    data = callback.data
+
+    if data.startswith("feedback_good:"):
+
+        rec_id = int(data.split(":")[1])
+
+        save_feedback(rec_id, "good")
+
+        await callback.message.edit_reply_markup()
+
+        await callback.answer(
+            "Спасибо! Это поможет улучшить рекомендации ❤️"
+        )
+
+    elif data.startswith("feedback_bad:"):
+
+        rec_id = int(data.split(":")[1])
+
+        save_feedback(rec_id, "bad")
+
+        await callback.message.edit_reply_markup()
+
+        await callback.answer(
+            "Поняла. Будем становиться точнее 🌷"
+        )
