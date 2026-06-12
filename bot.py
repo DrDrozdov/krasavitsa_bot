@@ -25,6 +25,11 @@ from database import (
     save_recommendation,
     get_user_recommendations,
     save_feedback,
+    save_product_feedback,
+    get_product_stats,
+    save_recommended_product,
+    get_recommended_product_name,
+    get_product_rating,
     get_last_recommendations
 )
 
@@ -217,6 +222,26 @@ async def my_recommendations(message: Message):
 
     await message.answer(text, parse_mode="HTML")
 
+@dp.message(F.text == "/product_stats")
+async def product_stats(message: Message):
+    rows = get_product_stats()
+
+    if not rows:
+        await message.answer("Пока нет статистики по средствам.")
+        return
+
+    text = "📊 <b>Статистика по средствам</b>\n\n"
+
+    for index, row in enumerate(rows, start=1):
+        product_name, likes, dislikes = row
+
+        text += (
+            f"<b>{index}. {product_name}</b>\n"
+            f"👍 {likes or 0}   👎 {dislikes or 0}\n\n"
+        )
+
+    await message.answer(text, parse_mode="HTML")
+
 @dp.message(F.text)
 async def handle_text(message: Message):
     loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
@@ -308,6 +333,11 @@ async def handle_text(message: Message):
 
                 links = make_market_links(product_name)
 
+                product_id = save_recommended_product(
+                    user_id=message.from_user.id,
+                    product_name=product_name
+                )
+
                 buttons = [
                     [
                         InlineKeyboardButton(text="Яндекс", url=links["Яндекс Маркет"]),
@@ -321,13 +351,19 @@ async def handle_text(message: Message):
                         InlineKeyboardButton(text="Лэтуаль", url=links["Лэтуаль"]),
                         InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
                     ],
+                    [
+                        InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}",
+                        InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id}",
+                    ],
                 ]
 
                 keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
                 emoji = get_category_emoji(product_category)
 
-                text = f"{emoji} <b>{product_name}</b>"
+                rating = get_product_rating(product_name)
+
+                text = f"{emoji}\n<code>{product_name}</code>\n\n{rating['text']}"
 
                 await message.answer(
                     text,
@@ -394,6 +430,41 @@ def get_category_emoji(category: str) -> str:
         return "🎭"
 
     return "✨"
+
+@dp.callback_query(F.data.startswith("product_good:"))
+async def product_good(callback: CallbackQuery):
+    product_id = int(callback.data.replace("product_good:", ""))
+    product_name = get_recommended_product_name(product_id)
+
+    if not product_name:
+        await callback.answer("Не удалось найти средство")
+        return
+
+    save_product_feedback(
+        user_id=callback.from_user.id,
+        product_name=product_name,
+        feedback="good"
+    )
+
+    await callback.answer("Сохранил: средство подошло 👍")
+
+
+@dp.callback_query(F.data.startswith("product_bad:"))
+async def product_bad(callback: CallbackQuery):
+    product_id = int(callback.data.replace("product_bad:", ""))
+    product_name = get_recommended_product_name(product_id)
+
+    if not product_name:
+        await callback.answer("Не удалось найти средство")
+        return
+
+    save_product_feedback(
+        user_id=callback.from_user.id,
+        product_name=product_name,
+        feedback="bad"
+    )
+
+    await callback.answer("Сохранил: средство не подошло 👎")
 
 async def main():
     init_db()
