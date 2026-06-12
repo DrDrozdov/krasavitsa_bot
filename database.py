@@ -96,16 +96,6 @@ def save_recommendation(user_id: int, user_request: str, answer: str):
     return rec_id
 
 
-def update_feedback(rec_id: int, feedback: str):
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    cur.execute("UPDATE recommendations SET feedback = ? WHERE id = ?", (feedback, rec_id))
-
-    conn.commit()
-    conn.close()
-
-
 def get_last_recommendations(user_id: int, limit: int = 5):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -124,7 +114,7 @@ def get_last_recommendations(user_id: int, limit: int = 5):
     return rows
 
 def save_feedback(rec_id, feedback):
-    conn = sqlite3.connect("beauty.db")
+    conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     cur.execute("""

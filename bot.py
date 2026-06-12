@@ -24,7 +24,6 @@ from database import (
     get_user_profile,
     save_recommendation,
     get_user_recommendations,
-    update_feedback,
     save_feedback,
     get_last_recommendations
 )
@@ -178,7 +177,7 @@ async def my_recommendations(message: Message):
 @dp.callback_query(F.data.startswith("feedback_good:"))
 async def feedback_good(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
-    update_feedback(rec_id, "good")
+    save_feedback(rec_id, "good")
 
     await callback.message.edit_text("Спасибо. Буду чаще учитывать такие рекомендации 👍")
     await callback.answer()
@@ -187,7 +186,7 @@ async def feedback_good(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("feedback_bad:"))
 async def feedback_bad(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
-    update_feedback(rec_id, "bad")
+    save_feedback(rec_id, "bad")
 
     await callback.message.edit_text("Понял. Буду осторожнее с такими вариантами 👎")
     await callback.answer()
@@ -385,31 +384,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
-@dp.callback_query()
-async def handle_feedback(callback: CallbackQuery):
-
-    data = callback.data
-
-    if data.startswith("feedback_good:"):
-
-        rec_id = int(data.split(":")[1])
-
-        save_feedback(rec_id, "good")
-
-        await callback.message.edit_reply_markup()
-
-        await callback.answer(
-            "Спасибо! Это поможет улучшить рекомендации ❤️"
-        )
-
-    elif data.startswith("feedback_bad:"):
-
-        rec_id = int(data.split(":")[1])
-
-        save_feedback(rec_id, "bad")
-
-        await callback.message.edit_reply_markup()
-
-        await callback.answer(
-            "Поняла. Будем становиться точнее 🌷"
-        )
