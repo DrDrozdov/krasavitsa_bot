@@ -162,7 +162,7 @@ def get_user_recommendations(user_id: int, limit: int = 5):
 
     return rows
 
-    def save_product_feedback(user_id: int, product_name: str, feedback: str):
+def save_product_feedback(user_id: int, product_name: str, feedback: str):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
@@ -179,7 +179,7 @@ def get_user_recommendations(user_id: int, limit: int = 5):
     conn.commit()
     conn.close()
 
-    def get_product_stats(limit: int = 10):
+def get_product_stats(limit: int = 10):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
@@ -200,7 +200,7 @@ def get_user_recommendations(user_id: int, limit: int = 5):
 
     return rows
 
-    def save_recommended_product(user_id: int, product_name: str):
+def save_recommended_product(user_id: int, product_name: str):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
