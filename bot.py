@@ -352,8 +352,8 @@ async def handle_text(message: Message):
                         InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
                     ],
                     [
-                        InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id})",
-                        InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id})",
+                        InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}"),
+                        InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id}"),
                     ],
                 ]
 
