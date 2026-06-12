@@ -1,6 +1,15 @@
 import sqlite3
 from datetime import datetime
 
+import re
+
+
+def normalize_product_name(name: str) -> str:
+    name = name.lower()
+    name = name.replace("ё", "е")
+    name = re.sub(r"[^a-zа-я0-9\s]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
 
 DB_NAME = "krasavitsa.db"
 
@@ -35,10 +44,16 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             product_name TEXT,
+            product_key TEXT,
             feedback TEXT,
             created_at TEXT
         )
     """)
+
+    try:
+        cur.execute("ALTER TABLE product_feedback ADD COLUMN product_key TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recommended_products (
@@ -166,12 +181,15 @@ def save_product_feedback(user_id: int, product_name: str, feedback: str):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
+    product_key = normalize_product_name(product_name)
+
     cur.execute("""
-        INSERT INTO product_feedback (user_id, product_name, feedback, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO product_feedback (user_id, product_name, product_key, feedback, created_at)
+        VALUES (?, ?, ?, ?, ?)
     """, (
         user_id,
         product_name,
+        product_key,
         feedback,
         datetime.now().isoformat()
     ))
@@ -189,7 +207,7 @@ def get_product_stats(limit: int = 10):
             SUM(CASE WHEN feedback = 'good' THEN 1 ELSE 0 END) as likes,
             SUM(CASE WHEN feedback = 'bad' THEN 1 ELSE 0 END) as dislikes
         FROM product_feedback
-        GROUP BY product_name
+        GROUP BY product_key
         ORDER BY likes DESC, dislikes ASC
         LIMIT ?
     """, (limit,))
@@ -245,14 +263,16 @@ def get_product_rating(product_name: str):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
+    product_key = normalize_product_name(product_name)
+
     cur.execute("""
         SELECT
             SUM(CASE WHEN feedback = 'good' THEN 1 ELSE 0 END),
             SUM(CASE WHEN feedback = 'bad' THEN 1 ELSE 0 END),
             COUNT(*)
         FROM product_feedback
-        WHERE product_name = ?
-    """, (product_name,))
+        WHERE product_key = ?
+    """, (product_key,))
 
     row = cur.fetchone()
     conn.close()
