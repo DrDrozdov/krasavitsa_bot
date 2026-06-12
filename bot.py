@@ -14,7 +14,7 @@ from aiogram.types import (
     KeyboardButton
 )
 
-from ai_client import ask_ыdeepseek
+from ai_client import ask_deepseek
 from links import make_market_links
 
 from database import (
