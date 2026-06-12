@@ -325,10 +325,9 @@ async def handle_text(message: Message):
 
                 keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-                text = f"🧴 <b>{index}. {product_name}</b>"
+                emoji = get_category_emoji(product_category)
 
-                if product_category:
-                    text += f"\n<code>{product_category}</code>"
+                text = f"{emoji} <b>{product_name}</b>"
 
                 await message.answer(
                     text,
@@ -375,6 +374,26 @@ async def handle_text(message: Message):
 
         print(e)
 
+
+def get_category_emoji(category: str) -> str:
+    category = category.lower()
+
+    if "крем" in category:
+        return "🧴"
+    if "сыворот" in category:
+        return "💧"
+    if "гель" in category:
+        return "🫧"
+    if "пенк" in category or "очищ" in category:
+        return "🧼"
+    if "тоник" in category or "тонер" in category:
+        return "🌿"
+    if "spf" in category or "солнц" in category:
+        return "☀️"
+    if "маск" in category:
+        return "🎭"
+
+    return "✨"
 
 async def main():
     init_db()
