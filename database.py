@@ -125,7 +125,7 @@ def get_last_recommendations(user_id: int, limit: int = 5):
 
 def save_feedback(rec_id, feedback):
     conn = sqlite3.connect("beauty.db")
-    cur = conn.cursor()
+    cur = conn.cursor()ы
 
     cur.execute("""
         UPDATE recommendations
