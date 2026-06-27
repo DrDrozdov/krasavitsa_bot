@@ -667,7 +667,12 @@ async def admin_stats(message: Message):
 
 async def main():
     init_db()
-    await dp.start_polling(bot)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(
+        bot,
+        skip_updates=True,
+        allowed_updates=["message", "callback_query"]
+    )
 
 
 if __name__ == "__main__":
