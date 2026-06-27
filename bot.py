@@ -147,36 +147,46 @@ async def help_cmd(message: Message):
 async def scenario_dryness(message: Message):
     loading_msg = await message.answer("Подбираю уход для сухой кожи...")
     await loading_msg.delete()
-    message.text = "Сухая кожа, шелушение, стянутость. Подбери базовый уход."
-    await handle_text(message)
+    await handle_text(
+        message,
+        "Сухая кожа, шелушение, стянутость. Подбери базовый уход."
+    )
 
 @dp.message(F.text == "✨ Жирный блеск")
 async def scenario_oily(message: Message):
     loading_msg = await message.answer("Подбираю уход для жирной кожи...")
     await loading_msg.delete()
-    message.text = "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход."
-    await handle_text(message)
+    await handle_text(
+        message,
+        "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход."
+    )
 
 @dp.message(F.text == "🌿 Чувствительность")
 async def scenario_sensitive(message: Message):
     loading_msg = await message.answer("Подбираю уход для чувствительной кожи...")
     await loading_msg.delete()
-    message.text = "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход."
-    await handle_text(message)
+    await handle_text(
+        message,
+        "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход."
+    )
 
 @dp.message(F.text == "😬 Акне")
 async def scenario_acne(message: Message):
     loading_msg = await message.answer("Подбираю уход для кожи с акне...")
     await loading_msg.delete()
-    message.text = "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить."
-    await handle_text(message)
+    await handle_text(
+        message,
+        "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить."
+    )
 
 @dp.message(F.text == "☀️ SPF защита")
 async def scenario_spf(message: Message):
     loading_msg = await message.answer("Подбираю средства с SPF...")
     await loading_msg.delete()
-    message.text = "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
-    await handle_text(message)
+    await handle_text(
+        message,
+        "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
+    )
 
 @dp.message(F.text == "📝 Другое")
 async def scenario_other(message: Message):
@@ -380,11 +390,12 @@ async def product_stats(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text)
-async def handle_text(message: Message):
+async def handle_text(message: Message, user_text: str | None = None):
     loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
 
     try:
-        data = await ask_deepseek(message.text)
+        text_to_process = user_text or message.text
+        data = await ask_deepseek(text_to_process)
 
         
         await loading_msg.delete()
