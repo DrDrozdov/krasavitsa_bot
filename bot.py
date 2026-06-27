@@ -1,6 +1,6 @@
+import html
 import os
-print("ALL ENV KEYS:", list(os.environ.keys()))
-print("BOT_TOKEN DEBUG:", os.getenv("BOT_TOKEN"))
+import re
 import asyncio
 
 
@@ -38,8 +38,6 @@ from database import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-print("BOT_TOKEN DEBUG:", BOT_TOKEN)
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN НЕ НАЙДЕН В RAILWAY VARIABLES")
@@ -320,6 +318,21 @@ async def doctor_warning(message: Message):
 async def help_button(message: Message):
     await help_cmd(message)
 
+SKIN_TYPE_PATTERN = re.compile(r"^(сухая|жирная|комбинированная|чувствительная)(?:\s+кожа)?$", re.IGNORECASE)
+
+@dp.message(lambda message: bool(message.text and SKIN_TYPE_PATTERN.fullmatch(message.text.strip())))
+async def set_skin_type(message: Message):
+    raw_text = message.text.strip()
+    skin_type = SKIN_TYPE_PATTERN.fullmatch(raw_text).group(1).lower()
+    update_user_profile(message.from_user.id, skin_type=skin_type)
+
+    await message.answer(
+        f"Сохранил твой тип кожи: <b>{html.escape(skin_type)}</b> ✅\n\n"
+        "Теперь напиши, что беспокоит кожу.",
+        parse_mode="HTML",
+        reply_markup=main_menu
+    )
+
 @dp.callback_query(F.data.startswith("feedback_good:"))
 async def feedback_good(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
@@ -356,16 +369,7 @@ async def my_recommendations(message: Message):
         date_str = date_obj.strftime("%d.%m.%Y %H:%M")
 
         text += f"<b>{index}. {date_str}</b>\n"
-        text += f"Запрос: <i>{user_request[:60]}</i>\n"
-
-        if feedback == "good":
-            text += "Результат: 👍 Полезно\n"
-        elif feedback == "bad":
-            text += "Результат: 👎 Не подошло\n"
-        else:
-            text += "Результат: ⏳ В ожидании оценки\n"
-
-        text += "\n"
+            text += f"Запрос: <i>{html.escape(user_request)}</i>\n"
 
     await message.answer(text, parse_mode="HTML")
 
@@ -451,7 +455,7 @@ async def handle_text(message: Message, user_text: str | None = None):
 
         rec_id = save_recommendation(
             user_id=message.from_user.id,
-            user_request=message.text,
+            user_request=text_to_process,
             answer=answer
         )
 
@@ -546,6 +550,13 @@ async def handle_text(message: Message, user_text: str | None = None):
                 reply_markup=keyboard,
             )
 
+    except ValueError as e:
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
+
+        await message.answer(str(e))
     except Exception as e:
         try:
             await loading_msg.delete()
