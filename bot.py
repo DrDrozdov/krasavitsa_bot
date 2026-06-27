@@ -111,6 +111,23 @@ budget_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+result_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="🔄 Ещё подбор"),
+            KeyboardButton(text="📜 Мои подборы")
+        ],
+        [
+            KeyboardButton(text="💰 Бюджет"),
+            KeyboardButton(text="🛒 Где искать")
+        ],
+        [
+            KeyboardButton(text="◀️ В главное меню")
+        ],
+    ],
+    resize_keyboard=True
+)
+
 @dp.message(F.text == "/start")
 async def start(message: Message):
     save_user(
@@ -144,46 +161,46 @@ async def help_cmd(message: Message):
 @dp.message(F.text == "💧 Сухость")
 async def scenario_dryness(message: Message):
     loading_msg = await message.answer("Подбираю уход для сухой кожи...")
-    await loading_msg.delete()
     await handle_text(
         message,
-        "Сухая кожа, шелушение, стянутость. Подбери базовый уход."
+        "Сухая кожа, шелушение, стянутость. Подбери базовый уход.",
+        loading_msg=loading_msg
     )
 
 @dp.message(F.text == "✨ Жирный блеск")
 async def scenario_oily(message: Message):
     loading_msg = await message.answer("Подбираю уход для жирной кожи...")
-    await loading_msg.delete()
     await handle_text(
         message,
-        "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход."
+        "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход.",
+        loading_msg=loading_msg
     )
 
 @dp.message(F.text == "🌿 Чувствительность")
 async def scenario_sensitive(message: Message):
     loading_msg = await message.answer("Подбираю уход для чувствительной кожи...")
-    await loading_msg.delete()
     await handle_text(
         message,
-        "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход."
+        "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход.",
+        loading_msg=loading_msg
     )
 
 @dp.message(F.text == "😬 Акне")
 async def scenario_acne(message: Message):
     loading_msg = await message.answer("Подбираю уход для кожи с акне...")
-    await loading_msg.delete()
     await handle_text(
         message,
-        "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить."
+        "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить.",
+        loading_msg=loading_msg
     )
 
 @dp.message(F.text == "☀️ SPF защита")
 async def scenario_spf(message: Message):
     loading_msg = await message.answer("Подбираю средства с SPF...")
-    await loading_msg.delete()
     await handle_text(
         message,
-        "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
+        "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты.",
+        loading_msg=loading_msg
     )
 
 @dp.message(F.text == "📝 Другое")
@@ -394,14 +411,14 @@ async def product_stats(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text)
-async def handle_text(message: Message, user_text: str | None = None):
-    loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
+async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
+    if loading_msg is None:
+        loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
 
     try:
         text_to_process = user_text or message.text
         data = await ask_deepseek(text_to_process)
 
-        
         await loading_msg.delete()
 
         summary = data.get("summary", "")
@@ -523,6 +540,11 @@ async def handle_text(message: Message, user_text: str | None = None):
                     reply_markup=keyboard,
                 )
 
+            await message.answer(
+                "Ниже ты найдёшь полезные кнопки для следующего шага.",
+                reply_markup=result_menu
+            )
+
         elif search_queries:
             main_query = search_queries[0]
             links = make_market_links(main_query)
@@ -548,6 +570,16 @@ async def handle_text(message: Message, user_text: str | None = None):
                 f"🔎 <b>Искать:</b> {main_query}",
                 parse_mode="HTML",
                 reply_markup=keyboard,
+            )
+
+            await message.answer(
+                "Выбери следующий шаг в работе с результатом:",
+                reply_markup=result_menu
+            )
+        else:
+            await message.answer(
+                "Готово! Выбери следующий шаг:",
+                reply_markup=result_menu
             )
 
     except ValueError as e:
