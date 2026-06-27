@@ -466,7 +466,9 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         if warning:
             answer += f"\n<b>Важно:</b>\n{warning}"
 
-        sent_answer = await loading_msg.edit_text(
+        await loading_msg.delete()
+
+        sent_answer = await message.answer(
             answer,
             parse_mode="HTML",
             reply_markup=result_menu
@@ -568,7 +570,7 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
             )
 
             await message.answer(
-                "Готово! Выбери следующий шаг:",
+                "Выбери следующий шаг:",
                 reply_markup=result_menu
             )
 
