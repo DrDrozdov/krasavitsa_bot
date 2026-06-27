@@ -14,18 +14,6 @@ load_dotenv(BASE_DIR / ".env")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
 
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Masked startup info to help debug missing env on deployment
-if DEEPSEEK_API_KEY:
-    masked = f"{DEEPSEEK_API_KEY[:4]}...{DEEPSEEK_API_KEY[-4:]}"
-    logger.info("DEEPSEEK_API_KEY loaded: %s (len=%d)", masked, len(DEEPSEEK_API_KEY))
-else:
-    logger.info("DEEPSEEK_API_KEY not set (empty)")
-
-
 async def ask_deepseek(user_text: str) -> dict:
     if not DEEPSEEK_API_KEY:
         raise ValueError("DEEPSEEK_API_KEY не найден. Проверь .env или переменную окружения.")
