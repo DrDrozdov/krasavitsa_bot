@@ -203,7 +203,7 @@ def get_product_stats(limit: int = 10):
 
     cur.execute("""
         SELECT
-            product_name,
+            MAX(product_name) as product_name,
             SUM(CASE WHEN feedback = 'good' THEN 1 ELSE 0 END) as likes,
             SUM(CASE WHEN feedback = 'bad' THEN 1 ELSE 0 END) as dislikes
         FROM product_feedback
@@ -298,4 +298,80 @@ def get_product_rating(product_name: str):
         "dislikes": dislikes,
         "total": total,
         "percent": percent
+    }
+
+
+# Функции для админ-статистики
+def get_total_users() -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    result = cur.fetchone()
+    conn.close()
+
+    return result[0] if result else 0
+
+
+def get_total_recommendations() -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM recommendations")
+    result = cur.fetchone()
+    conn.close()
+
+    return result[0] if result else 0
+
+
+def get_feedback_stats() -> dict:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            SUM(CASE WHEN feedback = 'good' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN feedback = 'bad' THEN 1 ELSE 0 END),
+            COUNT(*)
+        FROM recommendations
+        WHERE feedback IS NOT NULL
+    """)
+
+    row = cur.fetchone()
+    conn.close()
+
+    likes = row[0] or 0
+    dislikes = row[1] or 0
+    total = row[2] or 0
+
+    return {
+        "likes": likes,
+        "dislikes": dislikes,
+        "total": total
+    }
+
+
+def get_product_feedback_stats() -> dict:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT
+            SUM(CASE WHEN feedback = 'good' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN feedback = 'bad' THEN 1 ELSE 0 END),
+            COUNT(DISTINCT user_id)
+        FROM product_feedback
+    """)
+
+    row = cur.fetchone()
+    conn.close()
+
+    likes = row[0] or 0
+    dislikes = row[1] or 0
+    unique_users = row[2] or 0
+
+    return {
+        "likes": likes,
+        "dislikes": dislikes,
+        "unique_users": unique_users
     }

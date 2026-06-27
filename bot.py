@@ -30,7 +30,11 @@ from database import (
     save_recommended_product,
     get_recommended_product_name,
     get_product_rating,
-    get_last_recommendations
+    get_last_recommendations,
+    get_total_users,
+    get_total_recommendations,
+    get_feedback_stats,
+    get_product_feedback_stats
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -39,6 +43,15 @@ print("BOT_TOKEN DEBUG:", BOT_TOKEN)
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN НЕ НАЙДЕН В RAILWAY VARIABLES")
+
+# ID администраторов (можно указать через ADMIN_IDS в переменных окружения)
+ADMIN_IDS = []
+admin_ids_str = os.getenv("ADMIN_IDS", "")
+if admin_ids_str:
+    try:
+        ADMIN_IDS = [int(uid.strip()) for uid in admin_ids_str.split(",")]
+    except ValueError:
+        pass
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -57,6 +70,44 @@ main_menu = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="⚠️ Когда к врачу"),
             KeyboardButton(text="ℹ️ Помощь")
+        ],
+    ],
+    resize_keyboard=True
+)
+
+scenarios_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="💧 Сухость"),
+            KeyboardButton(text="✨ Жирный блеск")
+        ],
+        [
+            KeyboardButton(text="🌿 Чувствительность"),
+            KeyboardButton(text="😬 Акне")
+        ],
+        [
+            KeyboardButton(text="☀️ SPF защита"),
+            KeyboardButton(text="📝 Другое")
+        ],
+        [
+            KeyboardButton(text="◀️ В главное меню")
+        ],
+    ],
+    resize_keyboard=True
+)
+
+budget_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="до 1000 ₽"),
+            KeyboardButton(text="до 3000 ₽")
+        ],
+        [
+            KeyboardButton(text="до 6000 ₽"),
+            KeyboardButton(text="без ограничений")
+        ],
+        [
+            KeyboardButton(text="◀️ В главное меню")
         ],
     ],
     resize_keyboard=True
@@ -91,12 +142,114 @@ async def help_cmd(message: Message):
 
     await message.answer(text)
 
+# Обработчики быстрых сценариев
+@dp.message(F.text == "💧 Сухость")
+async def scenario_dryness(message: Message):
+    loading_msg = await message.answer("Подбираю уход для сухой кожи...")
+    await loading_msg.delete()
+    message.text = "Сухая кожа, шелушение, стянутость. Подбери базовый уход."
+    await handle_text(message)
+
+@dp.message(F.text == "✨ Жирный блеск")
+async def scenario_oily(message: Message):
+    loading_msg = await message.answer("Подбираю уход для жирной кожи...")
+    await loading_msg.delete()
+    message.text = "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход."
+    await handle_text(message)
+
+@dp.message(F.text == "🌿 Чувствительность")
+async def scenario_sensitive(message: Message):
+    loading_msg = await message.answer("Подбираю уход для чувствительной кожи...")
+    await loading_msg.delete()
+    message.text = "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход."
+    await handle_text(message)
+
+@dp.message(F.text == "😬 Акне")
+async def scenario_acne(message: Message):
+    loading_msg = await message.answer("Подбираю уход для кожи с акне...")
+    await loading_msg.delete()
+    message.text = "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить."
+    await handle_text(message)
+
+@dp.message(F.text == "☀️ SPF защита")
+async def scenario_spf(message: Message):
+    loading_msg = await message.answer("Подбираю средства с SPF...")
+    await loading_msg.delete()
+    message.text = "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
+    await handle_text(message)
+
+@dp.message(F.text == "📝 Другое")
+async def scenario_other(message: Message):
+    await message.answer(
+        "Опиши, что беспокоит кожу:\n\n"
+        "Например:\n"
+        "«Комбинированная кожа, жирный блеск в Т-зоне, щеки сухие, хочу базовый уход до 3000 ₽»"
+    )
+
+@dp.message(F.text == "◀️ В главное меню")
+async def back_to_main_menu(message: Message):
+    await message.answer("Выбери действие:", reply_markup=main_menu)
+
+# Обработчики выбора бюджета
+budget_mapping = {
+    "до 1000 ₽": "до 1000",
+    "до 3000 ₽": "до 3000",
+    "до 6000 ₽": "до 6000",
+    "без ограничений": "без ограничений"
+}
+
+@dp.message(F.text == "до 1000 ₽")
+async def budget_1000(message: Message):
+    update_user_profile(message.from_user.id, budget="до 1000 ₽")
+    await message.answer(
+        "Сохранил твой бюджет: <b>до 1000 ₽</b> ✅\n\n"
+        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        parse_mode="HTML",
+        reply_markup=main_menu
+    )
+
+@dp.message(F.text == "до 3000 ₽")
+async def budget_3000(message: Message):
+    update_user_profile(message.from_user.id, budget="до 3000 ₽")
+    await message.answer(
+        "Сохранил твой бюджет: <b>до 3000 ₽</b> ✅\n\n"
+        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        parse_mode="HTML",
+        reply_markup=main_menu
+    )
+
+@dp.message(F.text == "до 6000 ₽")
+async def budget_6000(message: Message):
+    update_user_profile(message.from_user.id, budget="до 6000 ₽")
+    await message.answer(
+        "Сохранил твой бюджет: <b>до 6000 ₽</b> ✅\n\n"
+        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        parse_mode="HTML",
+        reply_markup=main_menu
+    )
+
+@dp.message(F.text == "без ограничений")
+async def budget_unlimited(message: Message):
+    update_user_profile(message.from_user.id, budget="без ограничений")
+    await message.answer(
+        "Сохранил твой бюджет: <b>без ограничений</b> 👑\n\n"
+        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        parse_mode="HTML",
+        reply_markup=main_menu
+    )
+
 @dp.message(F.text == "💄 Подобрать уход")
 async def choose_care(message: Message):
     await message.answer(
-        "Опиши, что беспокоит кожу.\n\n"
-        "Например:\n"
-        "«Сухая кожа, шелушение, хочется базовый уход до 3000 ₽»"
+        "Выбери сценарий или опиши свою проблему:\n\n"
+        "💧 <b>Сухость</b> — шелушение, стянутость\n"
+        "✨ <b>Жирный блеск</b> — жирная кожа, расширенные поры\n"
+        "🌿 <b>Чувствительность</b> — покраснение, раздражение\n"
+        "😬 <b>Акне</b> — угри и воспаления\n"
+        "☀️ <b>SPF защита</b> — солнцезащита\n"
+        "📝 <b>Другое</b> — напиши свой вопрос",
+        parse_mode="HTML",
+        reply_markup=scenarios_menu
     )
 
 
@@ -115,12 +268,13 @@ async def skin_type(message: Message):
 @dp.message(F.text == "💰 Бюджет")
 async def budget(message: Message):
     await message.answer(
-        "Можешь сразу указать бюджет в запросе:\n\n"
-        "• до 1000 ₽\n"
-        "• 1000–3000 ₽\n"
-        "• 3000–6000 ₽\n"
-        "• без ограничений\n\n"
-        "Пример: «Комбинированная кожа, нужен уход до 3000 ₽»"
+        "Выбери максимальный бюджет на один товар:\n\n"
+        "💰 <b>до 1000 ₽</b> — эконом\n"
+        "💳 <b>до 3000 ₽</b> — стандарт\n"
+        "💎 <b>до 6000 ₽</b> — премиум\n"
+        "👑 <b>без ограничений</b> — люкс",
+        parse_mode="HTML",
+        reply_markup=budget_menu
     )
 
 
@@ -156,29 +310,6 @@ async def doctor_warning(message: Message):
 async def help_button(message: Message):
     await help_cmd(message)
 
-@dp.message(F.text == "📖 Мои рекомендации")
-async def my_recommendations(message: Message):
-    rows = get_last_recommendations(message.from_user.id)
-
-    if not rows:
-        await message.answer("Пока нет сохранённых рекомендаций.")
-        return
-
-    text = "📖 <b>Последние рекомендации</b>\n\n"
-
-    for index, row in enumerate(rows, start=1):
-        user_request, answer, feedback, created_at = row
-
-        text += f"<b>{index}. Запрос:</b> {user_request}\n"
-
-        if feedback:
-            text += f"<b>Оценка:</b> {feedback}\n"
-
-        text += "\n"
-
-    await message.answer(text, parse_mode="HTML")
-
-
 @dp.callback_query(F.data.startswith("feedback_good:"))
 async def feedback_good(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
@@ -209,14 +340,20 @@ async def my_recommendations(message: Message):
     for index, row in enumerate(rows, start=1):
         user_request, feedback, created_at = row
 
-        text += f"<b>{index}. Запрос:</b> {user_request}\n"
+        # Форматирование даты
+        from datetime import datetime
+        date_obj = datetime.fromisoformat(created_at)
+        date_str = date_obj.strftime("%d.%m.%Y %H:%M")
+
+        text += f"<b>{index}. {date_str}</b>\n"
+        text += f"Запрос: <i>{user_request[:60]}</i>\n"
 
         if feedback == "good":
-            text += "Оценка: 👍 Полезно\n"
+            text += "Результат: 👍 Полезно\n"
         elif feedback == "bad":
-            text += "Оценка: 👎 Не подошло\n"
+            text += "Результат: 👎 Не подошло\n"
         else:
-            text += "Оценка: пока нет\n"
+            text += "Результат: ⏳ В ожидании оценки\n"
 
         text += "\n"
 
@@ -465,6 +602,46 @@ async def product_bad(callback: CallbackQuery):
     )
 
     await callback.answer("Сохранил: средство не подошло 👎")
+
+@dp.message(F.text == "/admin_stats")
+async def admin_stats(message: Message):
+    # Проверка доступа
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У тебя нет доступа к этой команде.")
+        return
+
+    # Получение статистики
+    total_users = get_total_users()
+    total_recommendations = get_total_recommendations()
+    feedback_stats = get_feedback_stats()
+    product_feedback_stats = get_product_feedback_stats()
+    top_products = get_product_stats(limit=5)
+
+    # Формирование ответа
+    text = "📊 <b>Статистика администратора</b>\n\n"
+
+    text += f"<b>Пользователи:</b>\n👥 Всего: {total_users}\n\n"
+
+    text += f"<b>Запросы к AI:</b>\n🤖 Всего рекомендаций: {total_recommendations}\n\n"
+
+    text += f"<b>Оценки подборов:</b>\n"
+    text += f"👍 Полезно: {feedback_stats['likes']}\n"
+    text += f"👎 Не подошло: {feedback_stats['dislikes']}\n"
+    text += f"⏳ Всего оценено: {feedback_stats['total']}\n\n"
+
+    text += f"<b>Оценки товаров:</b>\n"
+    text += f"👍 Подошло: {product_feedback_stats['likes']}\n"
+    text += f"👎 Не подходит: {product_feedback_stats['dislikes']}\n"
+    text += f"👤 Пользователей оценили товары: {product_feedback_stats['unique_users']}\n\n"
+
+    if top_products:
+        text += "<b>🏆 Топ-5 средств:</b>\n"
+        for idx, (product_name, likes, dislikes) in enumerate(top_products, 1):
+            total = (likes or 0) + (dislikes or 0)
+            percent = round(((likes or 0) / total) * 100) if total > 0 else 0
+            text += f"{idx}. {product_name}\n   {percent}% · 👍 {likes or 0} / 👎 {dislikes or 0}\n"
+
+    await message.answer(text, parse_mode="HTML")
 
 async def main():
     init_db()
