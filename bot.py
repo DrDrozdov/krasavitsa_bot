@@ -369,7 +369,7 @@ async def my_recommendations(message: Message):
         date_str = date_obj.strftime("%d.%m.%Y %H:%M")
 
         text += f"<b>{index}. {date_str}</b>\n"
-            text += f"Запрос: <i>{html.escape(user_request)}</i>\n"
+        text += f"Запрос: <i>{html.escape(user_request)}</i>\n"
 
     await message.answer(text, parse_mode="HTML")
 
