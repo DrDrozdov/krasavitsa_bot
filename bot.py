@@ -33,7 +33,11 @@ from database import (
     get_total_recommendations,
     get_feedback_stats,
     get_product_feedback_stats,
-    get_total_recommended_products
+    get_total_recommended_products,
+    get_last_recommendation,
+    save_favorite,
+    get_favorites,
+    delete_favorite
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -119,6 +123,10 @@ result_menu = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="💰 Бюджет"),
             KeyboardButton(text="🛒 Где искать")
+        ],
+        [
+            KeyboardButton(text="🔖 В избранное"),
+            KeyboardButton(text="📂 Избранное")
         ],
         [
             KeyboardButton(text="◀️ В главное меню")
@@ -408,6 +416,51 @@ async def my_recommendations(message: Message):
         text += f"Запрос: <i>{html.escape(user_request)}</i>\n\n"
 
     await message.answer(text, parse_mode="HTML")
+
+@dp.message(F.text == "🔖 В избранное")
+async def add_favorite(message: Message):
+    last = get_last_recommendation(message.from_user.id)
+    if not last:
+        await message.answer("Нет последних рекомендаций для сохранения.")
+        return
+
+    fav_id = save_favorite(message.from_user.id, last["id"], title=None)
+    await message.answer("Сохранил подбор в избранное ✅")
+
+
+@dp.message(F.text == "📂 Избранное")
+async def list_favorites(message: Message):
+    rows = get_favorites(message.from_user.id)
+
+    if not rows:
+        await message.answer("У тебя пока нет избранного.")
+        return
+
+    for fav_id, rec_id, title, created_at, answer in rows:
+        title_text = title or f"Избранное #{fav_id}"
+        short = (answer or "")[:800]
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить", callback_data=f"fav_del:{fav_id}")]
+        ])
+
+        await message.answer(
+            f"<b>{html.escape(title_text)}</b>\n\n{short}",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+
+@dp.callback_query(F.data.startswith("fav_del:"))
+async def fav_delete(callback: CallbackQuery):
+    fav_id = int(callback.data.split(":" )[1])
+    delete_favorite(fav_id)
+
+    try:
+        await callback.message.edit_text("Удалено из избранного.")
+    except Exception:
+        pass
+
+    await callback.answer()
 
 @dp.message(F.text == "/product_stats")
 async def product_stats(message: Message):

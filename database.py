@@ -69,6 +69,21 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # Favorites table: links a user to a recommendation they liked
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            recommendation_id INTEGER,
+            title TEXT,
+            created_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
 
 def save_user(user_id: int, username: str = None):
     conn = sqlite3.connect(DB_NAME)
@@ -148,6 +163,34 @@ def get_last_recommendations(user_id: int, limit: int = 5):
     conn.close()
 
     return rows
+
+
+def get_last_recommendation(user_id: int):
+    """Return the latest recommendation row including id for given user, or None."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, user_request, answer, feedback, created_at
+        FROM recommendations
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (user_id,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "user_request": row[1],
+        "answer": row[2],
+        "feedback": row[3],
+        "created_at": row[4]
+    }
 
 def save_feedback(rec_id, feedback):
     conn = sqlite3.connect(DB_NAME)
@@ -378,6 +421,55 @@ def get_product_feedback_stats() -> dict:
         "dislikes": dislikes,
         "unique_users": unique_users
     }
+
+
+def save_favorite(user_id: int, recommendation_id: int, title: str | None = None) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO favorites (user_id, recommendation_id, title, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        recommendation_id,
+        title,
+        datetime.now().isoformat()
+    ))
+
+    fav_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    return fav_id
+
+
+def get_favorites(user_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT f.id, f.recommendation_id, f.title, f.created_at, r.answer
+        FROM favorites f
+        LEFT JOIN recommendations r ON r.id = f.recommendation_id
+        WHERE f.user_id = ?
+        ORDER BY f.id DESC
+    """, (user_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return rows
+
+
+def delete_favorite(fav_id: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("DELETE FROM favorites WHERE id = ?", (fav_id,))
+
+    conn.commit()
+    conn.close()
 
 
 def get_total_recommended_products() -> int:
