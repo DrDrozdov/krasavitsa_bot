@@ -12,19 +12,29 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 
-def _get_deepseek_config() -> tuple[str, str]:
+def _get_default_base_url(api_key: str) -> str:
+    if api_key.startswith("sk-aitunnel-"):
+        return "https://api.aitunnel.ru/v1"
+    return "https://api.deepseek.com"
+
+
+def _get_deepseek_config() -> tuple[str, str, str]:
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
-    return api_key, model
+    base_url = os.getenv("DEEPSEEK_API_BASE", "").strip()
+    if not base_url:
+        base_url = _get_default_base_url(api_key)
+    base_url = base_url.rstrip("/")
+    return api_key, model, base_url
 
 
 async def ask_deepseek(user_text: str) -> dict:
-    api_key, model = _get_deepseek_config()
+    api_key, model, base_url = _get_deepseek_config()
 
     if not api_key:
         raise ValueError("DEEPSEEK_API_KEY не найден. Проверь .env или переменную окружения.")
 
-    url = "https://api.aitunnel.ru/v1/chat/completions"
+    url = f"{base_url}/chat/completions"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -44,6 +54,7 @@ async def ask_deepseek(user_text: str) -> dict:
             }
         ],
         "temperature": 0.4,
+        "max_tokens": 1800,
         "response_format": {
             "type": "json_object"
         }
@@ -60,7 +71,12 @@ async def ask_deepseek(user_text: str) -> dict:
     except httpx.TimeoutException as exc:
         raise ValueError("Превышено время ожидания ответа DeepSeek.") from exc
     except httpx.HTTPStatusError as exc:
-        raise ValueError(f"DeepSeek вернул ошибку HTTP: {exc.response.status_code}") from exc
+        status_code = exc.response.status_code
+        if status_code == 401:
+            raise ValueError("DeepSeek не принял API-ключ. Проверь DEEPSEEK_API_KEY.") from exc
+        if status_code == 402:
+            raise ValueError("DeepSeek принял ключ, но на аккаунте нет доступного баланса или кредитов.") from exc
+        raise ValueError(f"DeepSeek вернул ошибку HTTP: {status_code}") from exc
     except httpx.RequestError as exc:
         raise ValueError(f"Не удалось связаться с DeepSeek: {exc}") from exc
 

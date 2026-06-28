@@ -500,15 +500,15 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         warning = data.get("warning", "")
 
         answer = "💄 <b>Красавица подобрала базовый уход</b>\n\n"
-        answer += f"<b>Что понял по запросу:</b>\n{summary}\n\n"
+        answer += f"<b>Что понял по запросу:</b>\n{html_text(summary)}\n\n"
 
         answer += "<b>Утро:</b>\n"
         for item in morning:
-            answer += f"• {item}\n"
+            answer += f"• {html_text(item)}\n"
 
         answer += "\n<b>Вечер:</b>\n"
         for item in evening:
-            answer += f"• {item}\n"
+            answer += f"• {html_text(item)}\n"
 
         if recommended_products:
             answer += "\n<b>Конкретные варианты:</b>\n"
@@ -518,25 +518,25 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                 category = product.get("category", "")
                 why = product.get("why", "")
 
-                answer += f"• <b>{name}</b>\n"
+                answer += f"• <b>{html_text(name)}</b>\n"
 
                 if category:
-                    answer += f"  {category}\n"
+                    answer += f"  {html_text(category)}\n"
 
                 if why:
-                    answer += f"  {why}\n"
+                    answer += f"  {html_text(why)}\n"
 
         answer += "\n<b>Что искать:</b>\n"
         for item in search_queries:
-            answer += f"• {item}\n"
+            answer += f"• {html_text(item)}\n"
 
         if avoid:
             answer += "\n<b>Чего лучше избегать:</b>\n"
             for item in avoid:
-                answer += f"• {item}\n"
+                answer += f"• {html_text(item)}\n"
 
         if warning:
-            answer += f"\n<b>Важно:</b>\n{warning}"
+            answer += f"\n<b>Важно:</b>\n{html_text(warning)}"
 
         await loading_msg.delete()
 
@@ -613,11 +613,12 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                     why=product_why
                 )
 
-                await message.answer_photo(
-                    photo=image_url,
+                await send_product_card(
+                    message=message,
+                    image_url=image_url,
                     caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
+                    keyboard=keyboard,
+                    product_name=product_name,
                 )
 
         elif search_queries:
@@ -642,7 +643,7 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
             await message.answer(
-                f"🔎 <b>Искать:</b> {main_query}",
+                f"🔎 <b>Искать:</b> {html_text(main_query)}",
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
@@ -670,6 +671,40 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         )
 
         print(e)
+
+
+def html_text(value) -> str:
+    return html.escape(str(value or ""), quote=False)
+
+
+def trim_text(value, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+async def send_product_card(
+    message: Message,
+    image_url: str,
+    caption: str,
+    keyboard: InlineKeyboardMarkup,
+    product_name: str,
+) -> None:
+    try:
+        await message.answer_photo(
+            photo=image_url,
+            caption=trim_text(caption, 1024),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as exc:
+        print(f"Product photo send failed for {product_name}: {exc}")
+        await message.answer(
+            trim_text(caption, 4096),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
 
 def get_category_emoji(category: str) -> str:
@@ -726,17 +761,19 @@ def format_price_range(price_range: str) -> str:
     if not price_range:
         return "💵 Цена ориентировочно"
 
-    return f"💵 {price_range}"
+    return f"💵 {html_text(price_range)}"
 
 
 def build_product_caption(product_name: str, product_category: str, price_range: str, why: str) -> str:
     emoji = get_category_emoji(product_category)
-    title = f"{emoji} <b>{product_category or 'Средство'}</b>\n<code>{product_name}</code>"
+    category_text = html_text(product_category or "Средство")
+    product_text = html_text(product_name)
+    title = f"{emoji} <b>{category_text}</b>\n<code>{product_text}</code>"
     price_text = format_price_range(price_range)
 
     caption = f"{title}\n\n{price_text}"
     if why:
-        caption += f"\n\n{why}"
+        caption += f"\n\n{html_text(why)}"
 
     return caption
 
