@@ -570,6 +570,9 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
             for index, product in enumerate(recommended_products[:5], start=1):
                 product_name = product.get("name", "").strip()
                 product_category = product.get("category", "").strip()
+                product_price = product.get("price_range", "").strip()
+                product_why = product.get("why", "").strip()
+                product_image = product.get("image_url", "").strip()
 
                 if not product_name:
                     continue
@@ -602,14 +605,17 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
 
                 keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-                emoji = get_category_emoji(product_category)
+                image_url = get_product_image_url(product_image, product_category)
+                caption = build_product_caption(
+                    product_name=product_name,
+                    product_category=product_category,
+                    price_range=product_price,
+                    why=product_why
+                )
 
-                rating = get_product_rating(product_name)
-
-                text = f"{emoji}\n<code>{product_name}</code>\n\n{rating['text']}"
-
-                await message.answer(
-                    text,
+                await message.answer_photo(
+                    photo=image_url,
+                    caption=caption,
                     parse_mode="HTML",
                     reply_markup=keyboard,
                 )
@@ -685,6 +691,54 @@ def get_category_emoji(category: str) -> str:
         return "🎭"
 
     return "✨"
+
+
+def get_category_placeholder_image(category: str) -> str:
+    if not category:
+        return "https://via.placeholder.com/800x800.png?text=Beauty+Product"
+
+    category = category.lower()
+    if "крем" in category:
+        return "https://via.placeholder.com/800x800.png?text=Face+Cream"
+    if "сыворот" in category:
+        return "https://via.placeholder.com/800x800.png?text=Serum"
+    if "гель" in category or "пенк" in category or "очищ" in category:
+        return "https://via.placeholder.com/800x800.png?text=Cleanser"
+    if "маск" in category:
+        return "https://via.placeholder.com/800x800.png?text=Mask"
+    if "spf" in category or "солнц" in category:
+        return "https://via.placeholder.com/800x800.png?text=SPF"
+
+    return "https://via.placeholder.com/800x800.png?text=Beauty+Product"
+
+
+def get_product_image_url(image_url: str, category: str) -> str:
+    if image_url and image_url.lower().startswith("http"):
+        return image_url
+    return get_category_placeholder_image(category)
+
+
+def format_price_range(price_range: str) -> str:
+    if not price_range:
+        return "💵 Цена ориентировочно"
+
+    price_range = price_range.strip()
+    if not price_range:
+        return "💵 Цена ориентировочно"
+
+    return f"💵 {price_range}"
+
+
+def build_product_caption(product_name: str, product_category: str, price_range: str, why: str) -> str:
+    emoji = get_category_emoji(product_category)
+    title = f"{emoji} <b>{product_category or 'Средство'}</b>\n<code>{product_name}</code>"
+    price_text = format_price_range(price_range)
+
+    caption = f"{title}\n\n{price_text}"
+    if why:
+        caption += f"\n\n{why}"
+
+    return caption
 
 @dp.callback_query(F.data.startswith("product_good:"))
 async def product_good(callback: CallbackQuery):
