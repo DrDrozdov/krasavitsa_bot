@@ -1,13 +1,22 @@
 import html
+import io
 import os
 import re
 import asyncio
+from urllib.parse import urljoin, urlparse
 
+import httpx
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message,
     CallbackQuery,
+    BufferedInputFile,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     ReplyKeyboardMarkup,
@@ -684,6 +693,123 @@ def trim_text(value, limit: int) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def is_http_url(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _extract_meta_image_url(page_url: str, page_html: str) -> str:
+    patterns = [
+        r'<meta[^>]+(?:property|name)=["\']og:image:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image:secure_url["\']',
+        r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image["\']',
+        r'<meta[^>]+(?:property|name)=["\']twitter:image(?::src)?["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']twitter:image(?::src)?["\']',
+        r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
+        r'<link[^>]+href=["\']([^"\']+)["\'][^>]+rel=["\']image_src["\']',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, page_html, re.IGNORECASE)
+        if match:
+            return urljoin(page_url, html.unescape(match.group(1).strip()))
+
+    return ""
+
+
+def _image_filename(product_name: str, content_type: str) -> str:
+    extension_by_type = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/gif": "gif",
+    }
+    extension = extension_by_type.get(content_type.split(";")[0].strip().lower(), "jpg")
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", product_name or "product").strip("_")
+    return f"{safe_name[:40] or 'product'}.{extension}"
+
+
+def _prepare_telegram_photo(image_bytes: bytes, content_type: str, product_name: str) -> BufferedInputFile | None:
+    content_type = content_type.split(";")[0].strip().lower()
+    if content_type in {"image/jpeg", "image/jpg", "image/png"}:
+        return BufferedInputFile(
+            image_bytes,
+            filename=_image_filename(product_name, content_type),
+        )
+
+    if content_type == "image/svg+xml":
+        return None
+
+    if Image is None:
+        print("Product image convert skipped: Pillow is not installed")
+        return None
+
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        if image.mode not in {"RGB", "L"}:
+            image = image.convert("RGB")
+
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=90, optimize=True)
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", product_name or "product").strip("_")
+        return BufferedInputFile(
+            output.getvalue(),
+            filename=f"{safe_name[:40] or 'product'}.jpg",
+        )
+    except Exception as exc:
+        print(f"Product image convert failed for {product_name}: {exc}")
+        return None
+
+
+async def fetch_exact_product_image(image_url: str, product_name: str) -> tuple[BufferedInputFile | None, str]:
+    if not is_http_url(image_url):
+        return None, ""
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0 Safari/537.36"
+        ),
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    }
+
+    async with httpx.AsyncClient(
+        timeout=20,
+        follow_redirects=True,
+        headers=headers,
+    ) as client:
+        response = await client.get(image_url)
+        response.raise_for_status()
+
+        content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+        source_url = str(response.url)
+
+        if content_type.startswith("image/"):
+            image_bytes = response.content
+            if not image_bytes:
+                return None, ""
+            image_file = _prepare_telegram_photo(image_bytes, content_type, product_name)
+            if not image_file:
+                return None, ""
+            return (
+                image_file,
+                source_url,
+            )
+
+        if "html" not in content_type:
+            return None, ""
+
+        page_html = response.text
+        meta_image_url = _extract_meta_image_url(source_url, page_html)
+        if not meta_image_url or meta_image_url == image_url:
+            return None, ""
+
+        return await fetch_exact_product_image(meta_image_url, product_name)
+
+
 async def send_product_card(
     message: Message,
     image_url: str,
@@ -691,20 +817,33 @@ async def send_product_card(
     keyboard: InlineKeyboardMarkup,
     product_name: str,
 ) -> None:
+    image_file = None
+    resolved_image_url = ""
+
     try:
-        await message.answer_photo(
-            photo=image_url,
-            caption=trim_text(caption, 1024),
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
+        image_file, resolved_image_url = await fetch_exact_product_image(image_url, product_name)
     except Exception as exc:
-        print(f"Product photo send failed for {product_name}: {exc}")
-        await message.answer(
-            trim_text(caption, 4096),
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
+        print(f"Product image fetch failed for {product_name}: {exc}")
+
+    if image_file:
+        try:
+            await message.answer_photo(
+                photo=image_file,
+                caption=trim_text(caption, 1024),
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+            print(f"Product photo sent for {product_name}: {resolved_image_url}")
+            return
+        except Exception as exc:
+            print(f"Product photo upload failed for {product_name}: {exc}")
+
+    print(f"Product photo skipped for {product_name}: no exact image URL")
+    await message.answer(
+        trim_text(caption, 4096),
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
 
 
 def get_category_emoji(category: str) -> str:
@@ -750,7 +889,7 @@ def get_category_placeholder_image(category: str) -> str:
 def get_product_image_url(image_url: str, category: str) -> str:
     if image_url and image_url.lower().startswith("http"):
         return image_url
-    return get_category_placeholder_image(category)
+    return ""
 
 
 def format_price_range(price_range: str) -> str:
