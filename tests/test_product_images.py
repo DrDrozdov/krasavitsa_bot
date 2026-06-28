@@ -17,6 +17,17 @@ def test_extract_meta_image_url_resolves_relative_url():
     assert result == "https://example.com/images/product.jpg"
 
 
+def test_extract_candidate_image_urls_filters_logo_and_resolves_product_image():
+    page_html = """
+    <img src="/assets/logo.svg">
+    <img src="/catalog/product-card.webp">
+    """
+
+    result = bot._extract_candidate_image_urls("https://example.com/search", page_html)
+
+    assert result == ["https://example.com/catalog/product-card.webp"]
+
+
 def test_prepare_telegram_photo_converts_webp_to_jpeg():
     image = Image.new("RGB", (32, 32), color="white")
     output = BytesIO()

@@ -3,7 +3,7 @@ import io
 import os
 import re
 import asyncio
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 
@@ -628,6 +628,7 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                     caption=caption,
                     keyboard=keyboard,
                     product_name=product_name,
+                    market_links=links,
                 )
 
         elif search_queries:
@@ -718,6 +719,74 @@ def _extract_meta_image_url(page_url: str, page_html: str) -> str:
     return ""
 
 
+def _extract_candidate_image_urls(page_url: str, page_html: str) -> list[str]:
+    candidates = []
+    meta_image_url = _extract_meta_image_url(page_url, page_html)
+    if meta_image_url:
+        candidates.append(meta_image_url)
+
+    attr_patterns = [
+        r'<img[^>]+(?:src|data-src|data-original)=["\']([^"\']+)["\']',
+        r'<source[^>]+srcset=["\']([^"\']+)["\']',
+        r'<img[^>]+srcset=["\']([^"\']+)["\']',
+    ]
+
+    for pattern in attr_patterns:
+        for match in re.finditer(pattern, page_html, re.IGNORECASE):
+            value = html.unescape(match.group(1).strip())
+            if " " in value or "," in value:
+                srcset_parts = [part.strip().split(" ")[0] for part in value.split(",")]
+                candidates.extend(srcset_parts)
+            else:
+                candidates.append(value)
+
+    result = []
+    seen = set()
+    for candidate in candidates:
+        absolute_url = urljoin(page_url, candidate.strip())
+        if _looks_like_product_image_url(absolute_url) and absolute_url not in seen:
+            result.append(absolute_url)
+            seen.add(absolute_url)
+
+    return result
+
+
+def _looks_like_product_image_url(image_url: str) -> bool:
+    if not is_http_url(image_url):
+        return False
+
+    parsed = urlparse(image_url)
+    path = unquote(parsed.path.lower())
+    full_url = unquote(image_url.lower())
+    bad_markers = [
+        "logo",
+        "sprite",
+        "icon",
+        "favicon",
+        "avatar",
+        "banner",
+        "placeholder",
+        "no-image",
+        "no_image",
+        "loader",
+        "pixel",
+        "counter",
+    ]
+
+    if any(marker in full_url for marker in bad_markers):
+        return False
+    if path.endswith(".svg"):
+        return False
+
+    return any(
+        marker in path
+        for marker in (".jpg", ".jpeg", ".png", ".webp", ".avif")
+    ) or any(
+        marker in full_url
+        for marker in ("image", "img", "photo", "picture", "product", "cdn")
+    )
+
+
 def _image_filename(product_name: str, content_type: str) -> str:
     extension_by_type = {
         "image/jpeg": "jpg",
@@ -743,7 +812,6 @@ def _prepare_telegram_photo(image_bytes: bytes, content_type: str, product_name:
         return None
 
     if Image is None:
-        print("Product image convert skipped: Pillow is not installed")
         return None
 
     try:
@@ -758,13 +826,18 @@ def _prepare_telegram_photo(image_bytes: bytes, content_type: str, product_name:
             output.getvalue(),
             filename=f"{safe_name[:40] or 'product'}.jpg",
         )
-    except Exception as exc:
-        print(f"Product image convert failed for {product_name}: {exc}")
+    except Exception:
         return None
 
 
-async def fetch_exact_product_image(image_url: str, product_name: str) -> tuple[BufferedInputFile | None, str]:
+async def fetch_exact_product_image(
+    image_url: str,
+    product_name: str,
+    depth: int = 0,
+) -> tuple[BufferedInputFile | None, str]:
     if not is_http_url(image_url):
+        return None, ""
+    if depth > 2:
         return None, ""
 
     headers = {
@@ -781,8 +854,13 @@ async def fetch_exact_product_image(image_url: str, product_name: str) -> tuple[
         follow_redirects=True,
         headers=headers,
     ) as client:
-        response = await client.get(image_url)
-        response.raise_for_status()
+        try:
+            response = await client.get(image_url)
+            response.raise_for_status()
+        except httpx.RequestError:
+            return None, ""
+        except httpx.HTTPStatusError:
+            return None, ""
 
         content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
         source_url = str(response.url)
@@ -803,11 +881,34 @@ async def fetch_exact_product_image(image_url: str, product_name: str) -> tuple[
             return None, ""
 
         page_html = response.text
-        meta_image_url = _extract_meta_image_url(source_url, page_html)
-        if not meta_image_url or meta_image_url == image_url:
-            return None, ""
+        candidate_urls = _extract_candidate_image_urls(source_url, page_html)
+        for candidate_url in candidate_urls[:8]:
+            if candidate_url == image_url:
+                continue
+            image_file, resolved_url = await fetch_exact_product_image(
+                candidate_url,
+                product_name,
+                depth=depth + 1,
+            )
+            if image_file:
+                return image_file, resolved_url
 
-        return await fetch_exact_product_image(meta_image_url, product_name)
+        return None, ""
+
+
+async def find_product_image_from_marketplaces(
+    product_name: str,
+    market_links: dict | None,
+) -> tuple[BufferedInputFile | None, str]:
+    if not market_links:
+        return None, ""
+
+    for source_url in market_links.values():
+        image_file, resolved_url = await fetch_exact_product_image(source_url, product_name)
+        if image_file:
+            return image_file, resolved_url
+
+    return None, ""
 
 
 async def send_product_card(
@@ -816,14 +917,17 @@ async def send_product_card(
     caption: str,
     keyboard: InlineKeyboardMarkup,
     product_name: str,
+    market_links: dict | None = None,
 ) -> None:
     image_file = None
     resolved_image_url = ""
 
-    try:
-        image_file, resolved_image_url = await fetch_exact_product_image(image_url, product_name)
-    except Exception as exc:
-        print(f"Product image fetch failed for {product_name}: {exc}")
+    image_file, resolved_image_url = await fetch_exact_product_image(image_url, product_name)
+    if not image_file:
+        image_file, resolved_image_url = await find_product_image_from_marketplaces(
+            product_name,
+            market_links,
+        )
 
     if image_file:
         try:
@@ -833,12 +937,10 @@ async def send_product_card(
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
-            print(f"Product photo sent for {product_name}: {resolved_image_url}")
             return
-        except Exception as exc:
-            print(f"Product photo upload failed for {product_name}: {exc}")
+        except Exception:
+            pass
 
-    print(f"Product photo skipped for {product_name}: no exact image URL")
     await message.answer(
         trim_text(caption, 4096),
         parse_mode="HTML",
