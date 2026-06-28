@@ -11,22 +11,28 @@ from prompts import SYSTEM_PROMPT
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
+
+def _get_deepseek_config() -> tuple[str, str]:
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    model = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
+    return api_key, model
+
 
 async def ask_deepseek(user_text: str) -> dict:
-    if not DEEPSEEK_API_KEY:
+    api_key, model = _get_deepseek_config()
+
+    if not api_key:
         raise ValueError("DEEPSEEK_API_KEY не найден. Проверь .env или переменную окружения.")
 
     url = "https://api.aitunnel.ru/v1/chat/completions"
 
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": model,
         "messages": [
             {
                 "role": "system",
@@ -43,14 +49,20 @@ async def ask_deepseek(user_text: str) -> dict:
         }
     }
 
-    async with httpx.AsyncClient(timeout=40) as client:
-        response = await client.post(
-            url,
-            headers=headers,
-            json=payload
-        )
-
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=40) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise ValueError("Превышено время ожидания ответа DeepSeek.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise ValueError(f"DeepSeek вернул ошибку HTTP: {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise ValueError(f"Не удалось связаться с DeepSeek: {exc}") from exc
 
     try:
         response_json = response.json()

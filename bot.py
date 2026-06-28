@@ -21,7 +21,6 @@ from database import (
     init_db,
     save_user,
     update_user_profile,
-    get_user_profile,
     save_recommendation,
     get_user_recommendations,
     save_feedback,
@@ -30,7 +29,6 @@ from database import (
     save_recommended_product,
     get_recommended_product_name,
     get_product_rating,
-    get_last_recommendations,
     get_total_users,
     get_total_recommendations,
     get_feedback_stats,
@@ -158,49 +156,64 @@ async def help_cmd(message: Message):
     await message.answer(text)
 
 # Обработчики быстрых сценариев
+async def run_scenario(message: Message, loading_text: str, prompt: str):
+    loading_msg = await message.answer(loading_text)
+
+    try:
+        await handle_text(
+            message,
+            prompt,
+            loading_msg=loading_msg
+        )
+    except Exception as e:
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
+
+        await message.answer(
+            "Не удалось обработать сценарий. Попробуй повторить запрос или напиши проблему иначе."
+        )
+        print(f"Scenario error: {e}")
+
 @dp.message(F.text == "💧 Сухость")
 async def scenario_dryness(message: Message):
-    loading_msg = await message.answer("Подбираю уход для сухой кожи...")
-    await handle_text(
+    await run_scenario(
         message,
-        "Сухая кожа, шелушение, стянутость. Подбери базовый уход.",
-        loading_msg=loading_msg
+        "Подбираю уход для сухой кожи...",
+        "Сухая кожа, шелушение, стянутость. Подбери базовый уход."
     )
 
 @dp.message(F.text == "✨ Жирный блеск")
 async def scenario_oily(message: Message):
-    loading_msg = await message.answer("Подбираю уход для жирной кожи...")
-    await handle_text(
+    await run_scenario(
         message,
-        "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход.",
-        loading_msg=loading_msg
+        "Подбираю уход для жирной кожи...",
+        "Жирная кожа, жирный блеск в Т-зоне, расширенные поры. Подбери базовый уход."
     )
 
 @dp.message(F.text == "🌿 Чувствительность")
 async def scenario_sensitive(message: Message):
-    loading_msg = await message.answer("Подбираю уход для чувствительной кожи...")
-    await handle_text(
+    await run_scenario(
         message,
-        "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход.",
-        loading_msg=loading_msg
+        "Подбираю уход для чувствительной кожи...",
+        "Чувствительная кожа, покраснение, раздражение. Подбери мягкий базовый уход."
     )
 
 @dp.message(F.text == "😬 Акне")
 async def scenario_acne(message: Message):
-    loading_msg = await message.answer("Подбираю уход для кожи с акне...")
-    await handle_text(
+    await run_scenario(
         message,
-        "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить.",
-        loading_msg=loading_msg
+        "Подбираю уход для кожи с акне...",
+        "Кожа с акне и воспалениями, угри. Подбери базовый уход, чтобы не ухудшить."
     )
 
 @dp.message(F.text == "☀️ SPF защита")
 async def scenario_spf(message: Message):
-    loading_msg = await message.answer("Подбираю средства с SPF...")
-    await handle_text(
+    await run_scenario(
         message,
-        "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты.",
-        loading_msg=loading_msg
+        "Подбираю средства с SPF...",
+        "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
     )
 
 @dp.message(F.text == "📝 Другое")
@@ -215,13 +228,12 @@ async def scenario_other(message: Message):
 async def back_to_main_menu(message: Message):
     await message.answer("Выбери действие:", reply_markup=main_menu)
 
-# Обработчики выбора бюджета
-budget_mapping = {
-    "до 1000 ₽": "до 1000",
-    "до 3000 ₽": "до 3000",
-    "до 6000 ₽": "до 6000",
-    "без ограничений": "без ограничений"
-}
+@dp.message(F.text == "🔄 Ещё подбор")
+async def another_selection(message: Message):
+    await message.answer(
+        "Выбери сценарий или напиши свою проблему:",
+        reply_markup=scenarios_menu
+    )
 
 @dp.message(F.text == "до 1000 ₽")
 async def budget_1000(message: Message):
@@ -385,8 +397,14 @@ async def my_recommendations(message: Message):
         date_obj = datetime.fromisoformat(created_at)
         date_str = date_obj.strftime("%d.%m.%Y %H:%M")
 
-        text += f"<b>{index}. {date_str}</b>\n"
-        text += f"Запрос: <i>{html.escape(user_request)}</i>\n"
+        feedback_text = ""
+        if feedback == "good":
+            feedback_text = " — 👍 полезно"
+        elif feedback == "bad":
+            feedback_text = " — 👎 не подошло"
+
+        text += f"<b>{index}. {date_str}</b>{feedback_text}\n"
+        text += f"Запрос: <i>{html.escape(user_request)}</i>\n\n"
 
     await message.answer(text, parse_mode="HTML")
 

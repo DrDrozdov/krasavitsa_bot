@@ -5,7 +5,10 @@ import re
 
 
 def normalize_product_name(name: str) -> str:
-    name = name.lower()
+    if not name:
+        return ""
+
+    name = str(name).lower()
     name = name.replace("ё", "е")
     name = re.sub(r"[^a-zа-я0-9\s]", " ", name)
     name = re.sub(r"\s+", " ", name).strip()

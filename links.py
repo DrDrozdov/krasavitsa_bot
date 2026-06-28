@@ -2,7 +2,17 @@ from urllib.parse import quote_plus
 
 
 def make_market_links(query: str) -> dict:
-    q = quote_plus(query)
+    q = quote_plus((query or "").strip())
+
+    if not q:
+        return {
+            "Яндекс Маркет": "",
+            "Золотое Яблоко": "",
+            "Ozon": "",
+            "Wildberries": "",
+            "Лэтуаль": "",
+            "Рив Гош": "",
+        }
 
     return {
         "Яндекс Маркет": f"https://market.yandex.ru/search?text={q}",
