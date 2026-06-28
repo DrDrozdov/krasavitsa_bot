@@ -32,8 +32,20 @@ def test_offtopic_reply_is_friendly_and_has_smile():
     assert "🙂" in reply
     assert "косметике" in reply
     assert "ароматах" in reply
+    assert bot.WEBSITE_URL in reply
 
 
 def test_thanks_reply_uses_feminine_voice():
     assert bot.is_thanks_message("спасибо")
     assert bot.build_thanks_reply().startswith("Рада помочь")
+
+
+def test_website_note_points_to_project_site():
+    assert bot.WEBSITE_URL == "https://krasavitsa-ai.ru/"
+    assert bot.WEBSITE_URL in bot.build_website_note()
+
+
+def test_website_keyboard_points_to_project_site():
+    keyboard = bot.website_keyboard()
+
+    assert keyboard.inline_keyboard[0][0].url == bot.WEBSITE_URL

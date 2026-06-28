@@ -50,6 +50,7 @@ from database import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBSITE_URL = "https://krasavitsa-ai.ru/"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN НЕ НАЙДЕН В RAILWAY VARIABLES")
@@ -70,6 +71,19 @@ IMAGE_FETCH_TIMEOUT = 8
 IMAGE_SEARCH_TIMEOUT = 8
 IMAGE_CARD_TIMEOUT = 18
 MAX_IMAGE_SEARCH_QUERIES = 4
+
+
+def website_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Открыть сайт Красавицы", url=WEBSITE_URL)]
+    ])
+
+
+def build_website_note() -> str:
+    return (
+        "Если удобнее выбирать с экрана побольше, у «Красавицы» есть сайт — "
+        f"{WEBSITE_URL}"
+    )
 
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -163,6 +177,10 @@ async def start(message: Message):
     )
 
     await message.answer(text, reply_markup=main_menu)
+    await message.answer(
+        build_website_note(),
+        reply_markup=website_keyboard()
+    )
 
 
 @dp.message(F.text == "/help")
@@ -173,10 +191,19 @@ async def help_cmd(message: Message):
         "2. Что беспокоит: сухость, шелушение, блеск, покраснение и т.д.\n"
         "3. Что уже используешь.\n"
         "4. Есть ли аллергия или раздражение.\n\n"
-        "Пример: «Комбинированная кожа, жирный блеск в Т-зоне, щеки сухие, хочу базовый уход»."
+        "Пример: «Комбинированная кожа, жирный блеск в Т-зоне, щеки сухие, хочу базовый уход».\n\n"
+        f"Ещё можно спокойно попробовать сайт: {WEBSITE_URL}"
     )
 
-    await message.answer(text)
+    await message.answer(text, reply_markup=website_keyboard())
+
+
+@dp.message(F.text == "/site")
+async def site_cmd(message: Message):
+    await message.answer(
+        build_website_note(),
+        reply_markup=website_keyboard()
+    )
 
 # Обработчики быстрых сценариев
 async def run_scenario(message: Message, loading_text: str, prompt: str):
@@ -347,7 +374,9 @@ async def where_to_search(message: Message):
         "• Ozon\n"
         "• Wildberries\n"
         "• Лэтуаль\n"
-        "• Рив Гош"
+        "• Рив Гош\n\n"
+        f"А ещё можно открыть сайт проекта: {WEBSITE_URL}",
+        reply_markup=website_keyboard()
     )
 
 
@@ -608,7 +637,8 @@ def build_offtopic_reply() -> str:
     return (
         "Я лучше всего разбираюсь в косметике, уходе и скоро — в ароматах 🙂\n\n"
         "Напиши, что хочешь подобрать: крем, SPF, очищение, сыворотку, средство под бюджет "
-        "или конкретный запрос — и я аккуратно помогу."
+        "или конкретный запрос — и я аккуратно помогу.\n\n"
+        f"Если удобнее в браузере, сайт тоже рядом: {WEBSITE_URL}"
     )
 
 
