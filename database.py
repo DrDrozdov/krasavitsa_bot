@@ -378,3 +378,15 @@ def get_product_feedback_stats() -> dict:
         "dislikes": dislikes,
         "unique_users": unique_users
     }
+
+
+def get_total_recommended_products() -> int:
+    """Return total count of saved recommended products."""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM recommended_products")
+    result = cur.fetchone()
+    conn.close()
+
+    return result[0] if result else 0
