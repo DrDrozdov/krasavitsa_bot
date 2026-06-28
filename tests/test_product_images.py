@@ -20,12 +20,44 @@ def test_extract_meta_image_url_resolves_relative_url():
 def test_extract_candidate_image_urls_filters_logo_and_resolves_product_image():
     page_html = """
     <img src="/assets/logo.svg">
-    <img src="/catalog/product-card.webp">
+    <img src="/catalog/product-card.webp" alt="Test Product cream">
     """
 
-    result = bot._extract_candidate_image_urls("https://example.com/search", page_html)
+    result = bot._extract_candidate_image_urls(
+        "https://example.com/search",
+        page_html,
+        product_name="Test Product cream",
+        strict_match=True,
+    )
 
     assert result == ["https://example.com/catalog/product-card.webp"]
+
+
+def test_extract_candidate_image_urls_rejects_same_brand_wrong_product():
+    page_html = """
+    <img src="/catalog/eucerin-anti-pigment.webp" alt="Eucerin Anti-Pigment Dual Serum">
+    <img src="/catalog/eucerin-sun-protection.webp" alt="Eucerin Sun Protection крем SPF 30">
+    """
+
+    result = bot._extract_candidate_image_urls(
+        "https://example.com/search",
+        page_html,
+        product_name="Eucerin Sun Protection крем с SPF 30",
+        strict_match=True,
+    )
+
+    assert result == ["https://example.com/catalog/eucerin-sun-protection.webp"]
+
+
+def test_context_matches_product_requires_more_than_brand():
+    assert not bot._context_matches_product(
+        "La Roche-Posay Anthelios UVMune 400 крем SPF 50+",
+        "La Roche-Posay Toleriane Dermo-Cleanser",
+    )
+    assert bot._context_matches_product(
+        "La Roche-Posay Anthelios UVMune 400 крем SPF 50+",
+        "La Roche-Posay Anthelios UVMune 400 SPF50",
+    )
 
 
 def test_prepare_telegram_photo_converts_webp_to_jpeg():

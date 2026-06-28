@@ -699,6 +699,62 @@ def is_http_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def _normalize_product_text(value: str) -> str:
+    text = str(value or "").lower()
+    replacements = {
+        "ё": "е",
+        "uvmune": "uv mune",
+        "spf50+": "spf 50",
+        "spf30": "spf 30",
+        "spf50": "spf 50",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    text = re.sub(r"[^a-zа-я0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _product_tokens(product_name: str) -> list[str]:
+    stop_words = {
+        "cream",
+        "крем",
+        "средство",
+        "очищающее",
+        "солнцезащитный",
+        "spf",
+        "with",
+        "для",
+        "the",
+        "and",
+        "face",
+    }
+    tokens = _normalize_product_text(product_name).split()
+    return [
+        token
+        for token in tokens
+        if len(token) >= 3 and token not in stop_words
+    ]
+
+
+def _context_matches_product(product_name: str, context: str) -> bool:
+    tokens = _product_tokens(product_name)
+    if not tokens:
+        return False
+
+    normalized_context = _normalize_product_text(context)
+    if not normalized_context:
+        return False
+
+    brand_token = tokens[0]
+    if brand_token not in normalized_context:
+        return False
+
+    meaningful_tokens = tokens[1:] or tokens
+    matched = sum(1 for token in meaningful_tokens if token in normalized_context)
+    required = 1 if len(tokens) <= 3 else 2
+    return matched >= required
+
+
 def _extract_meta_image_url(page_url: str, page_html: str) -> str:
     patterns = [
         r'<meta[^>]+(?:property|name)=["\']og:image:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
@@ -719,31 +775,59 @@ def _extract_meta_image_url(page_url: str, page_html: str) -> str:
     return ""
 
 
-def _extract_candidate_image_urls(page_url: str, page_html: str) -> list[str]:
+def _strip_html_tags(value: str) -> str:
+    return re.sub(r"<[^>]+>", " ", value or "")
+
+
+def _extract_candidate_image_urls(
+    page_url: str,
+    page_html: str,
+    product_name: str = "",
+    strict_match: bool = False,
+) -> list[str]:
     candidates = []
     meta_image_url = _extract_meta_image_url(page_url, page_html)
     if meta_image_url:
-        candidates.append(meta_image_url)
+        meta_context = page_html[:3000]
+        candidates.append((meta_image_url, meta_context))
 
-    attr_patterns = [
-        r'<img[^>]+(?:src|data-src|data-original)=["\']([^"\']+)["\']',
-        r'<source[^>]+srcset=["\']([^"\']+)["\']',
-        r'<img[^>]+srcset=["\']([^"\']+)["\']',
-    ]
+    tag_pattern = r"<(?:img|source)\b[^>]*>"
 
-    for pattern in attr_patterns:
-        for match in re.finditer(pattern, page_html, re.IGNORECASE):
-            value = html.unescape(match.group(1).strip())
+    for match in re.finditer(tag_pattern, page_html, re.IGNORECASE):
+        tag = match.group(0)
+        values = []
+        for attr in ("src", "data-src", "data-original", "srcset"):
+            attr_match = re.search(rf'\b{attr}=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            if attr_match:
+                values.append(html.unescape(attr_match.group(1).strip()))
+
+        tag_text_parts = []
+        for attr in ("alt", "title", "aria-label"):
+            attr_match = re.search(rf'\b{attr}=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            if attr_match:
+                tag_text_parts.append(html.unescape(attr_match.group(1).strip()))
+
+        context_start = max(0, match.start() - 900)
+        context_end = min(len(page_html), match.end() + 900)
+        surrounding_context = page_html[context_start:context_end]
+        readable_context = _strip_html_tags(
+            f"{' '.join(tag_text_parts)} {tag} {surrounding_context}"
+        )
+
+        for value in values:
             if " " in value or "," in value:
                 srcset_parts = [part.strip().split(" ")[0] for part in value.split(",")]
-                candidates.extend(srcset_parts)
+                candidates.extend((part, readable_context) for part in srcset_parts)
             else:
-                candidates.append(value)
+                candidates.append((value, readable_context))
 
     result = []
     seen = set()
-    for candidate in candidates:
+    for candidate, context in candidates:
         absolute_url = urljoin(page_url, candidate.strip())
+        combined_context = f"{context} {absolute_url}"
+        if strict_match and not _context_matches_product(product_name, combined_context):
+            continue
         if _looks_like_product_image_url(absolute_url) and absolute_url not in seen:
             result.append(absolute_url)
             seen.add(absolute_url)
@@ -834,6 +918,7 @@ async def fetch_exact_product_image(
     image_url: str,
     product_name: str,
     depth: int = 0,
+    strict_match: bool = False,
 ) -> tuple[BufferedInputFile | None, str]:
     if not is_http_url(image_url):
         return None, ""
@@ -881,7 +966,12 @@ async def fetch_exact_product_image(
             return None, ""
 
         page_html = response.text
-        candidate_urls = _extract_candidate_image_urls(source_url, page_html)
+        candidate_urls = _extract_candidate_image_urls(
+            source_url,
+            page_html,
+            product_name=product_name,
+            strict_match=True,
+        )
         for candidate_url in candidate_urls[:8]:
             if candidate_url == image_url:
                 continue
@@ -889,6 +979,7 @@ async def fetch_exact_product_image(
                 candidate_url,
                 product_name,
                 depth=depth + 1,
+                strict_match=False,
             )
             if image_file:
                 return image_file, resolved_url
