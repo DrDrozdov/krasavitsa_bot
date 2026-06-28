@@ -496,13 +496,134 @@ async def product_stats(message: Message):
 
     await message.answer(text, parse_mode="HTML")
 
+
+COSMETIC_REQUEST_KEYWORDS = {
+    "акне",
+    "антиоксидант",
+    "блеск",
+    "бюджет",
+    "воспал",
+    "гель",
+    "гидрофил",
+    "дермат",
+    "жирн",
+    "защит",
+    "кожа",
+    "кожи",
+    "комед",
+    "комбинир",
+    "космет",
+    "крем",
+    "лосьон",
+    "маска",
+    "морщ",
+    "очищ",
+    "пенк",
+    "пилинг",
+    "покрас",
+    "пор",
+    "прыщ",
+    "раздраж",
+    "ретин",
+    "салицил",
+    "себум",
+    "серум",
+    "сияни",
+    "солнц",
+    "средств",
+    "сыворот",
+    "сух",
+    "тоник",
+    "тонер",
+    "увлаж",
+    "угр",
+    "уход",
+    "шелуш",
+    "spf",
+    "uv",
+}
+
+NON_COSMETIC_SHORT_PHRASES = {
+    "как дела",
+    "как ты",
+    "привет",
+    "здравствуй",
+    "здравствуйте",
+    "добрый день",
+    "доброе утро",
+    "добрый вечер",
+    "спасибо",
+    "ок",
+    "хорошо",
+}
+
+THANKS_PHRASES = {
+    "спасибо",
+    "спасиб",
+    "спс",
+    "благодарю",
+    "мерси",
+    "thanks",
+    "thank you",
+}
+
+NON_COSMETIC_PATTERNS = [
+    re.compile(r"\bхочу\s+в\s+[а-яёa-z-]+", re.IGNORECASE),
+    re.compile(r"\bпоеду\s+в\s+[а-яёa-z-]+", re.IGNORECASE),
+    re.compile(r"\bкуда\s+сходить\b", re.IGNORECASE),
+    re.compile(r"\bчто\s+посмотреть\b", re.IGNORECASE),
+]
+
+
+def normalize_user_request_text(text: str) -> str:
+    text = str(text or "").lower().replace("ё", "е")
+    text = re.sub(r"[^a-zа-я0-9\s+.-]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_cosmetic_request(text: str) -> bool:
+    normalized = normalize_user_request_text(text)
+    if not normalized:
+        return False
+
+    if normalized in NON_COSMETIC_SHORT_PHRASES:
+        return False
+
+    if any(pattern.search(normalized) for pattern in NON_COSMETIC_PATTERNS):
+        return False
+
+    return any(keyword in normalized for keyword in COSMETIC_REQUEST_KEYWORDS)
+
+
+def is_thanks_message(text: str) -> bool:
+    normalized = normalize_user_request_text(text)
+    return normalized in THANKS_PHRASES
+
+
+def build_thanks_reply() -> str:
+    return "Рада помочь 🙂 Если захочешь ещё подбор — просто напиши, что ищем."
+
+
+def build_offtopic_reply() -> str:
+    return (
+        "Я лучше всего разбираюсь в косметике, уходе и скоро — в ароматах 🙂\n\n"
+        "Напиши, что хочешь подобрать: крем, SPF, очищение, сыворотку, средство под бюджет "
+        "или конкретный запрос — и я аккуратно помогу."
+    )
+
+
 @dp.message(F.text)
 async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
+    text_to_process = user_text or message.text
+    if user_text is None and not is_cosmetic_request(text_to_process):
+        reply_text = build_thanks_reply() if is_thanks_message(text_to_process) else build_offtopic_reply()
+        await message.answer(reply_text, reply_markup=main_menu)
+        return
+
     if loading_msg is None:
         loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
 
     try:
-        text_to_process = user_text or message.text
         data = await ask_deepseek(text_to_process)
 
         summary = data.get("summary", "")
@@ -514,7 +635,7 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         warning = data.get("warning", "")
 
         answer = "💄 <b>Красавица подобрала базовый уход</b>\n\n"
-        answer += f"<b>Что понял по запросу:</b>\n{html_text(summary)}\n\n"
+        answer += f"<b>Что учла по запросу:</b>\n{html_text(summary)}\n\n"
 
         answer += "<b>Утро:</b>\n"
         for item in morning:
