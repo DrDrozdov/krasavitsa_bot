@@ -32,7 +32,8 @@ from database import (
     get_total_users,
     get_total_recommendations,
     get_feedback_stats,
-    get_product_feedback_stats
+    get_product_feedback_stats,
+    get_total_recommended_products
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -677,6 +678,7 @@ async def admin_stats(message: Message):
     # Получение статистики
     total_users = get_total_users()
     total_recommendations = get_total_recommendations()
+    total_recommended_products = get_total_recommended_products()
     feedback_stats = get_feedback_stats()
     product_feedback_stats = get_product_feedback_stats()
     top_products = get_product_stats(limit=5)
@@ -685,13 +687,19 @@ async def admin_stats(message: Message):
     text = "📊 <b>Статистика администратора</b>\n\n"
 
     text += f"<b>Пользователи:</b>\n👥 Всего: {total_users}\n\n"
+    text += f"<b>Активных пользователей:</b>\n👤 С рекомендациями: {min(total_users, total_recommendations or 0)}\n\n"
 
-    text += f"<b>Запросы к AI:</b>\n🤖 Всего рекомендаций: {total_recommendations}\n\n"
+    text += f"<b>Запросы к AI:</b>\n🤖 Всего рекомендаций: {total_recommendations}\n"
+    text += f"🛍️ Всего товаров сохранено: {total_recommended_products}\n\n"
 
     text += f"<b>Оценки подборов:</b>\n"
     text += f"👍 Полезно: {feedback_stats['likes']}\n"
     text += f"👎 Не подошло: {feedback_stats['dislikes']}\n"
-    text += f"⏳ Всего оценено: {feedback_stats['total']}\n\n"
+    text += f"⏳ Всего оценено: {feedback_stats['total']}\n"
+    if feedback_stats['total'] > 0:
+        like_rate = round((feedback_stats['likes'] / feedback_stats['total']) * 100)
+        text += f" ({like_rate}% положительных)\n"
+    text += "\n"
 
     text += f"<b>Оценки товаров:</b>\n"
     text += f"👍 Подошло: {product_feedback_stats['likes']}\n"
