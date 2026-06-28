@@ -66,6 +66,11 @@ if admin_ids_str:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+IMAGE_FETCH_TIMEOUT = 8
+IMAGE_SEARCH_TIMEOUT = 8
+IMAGE_CARD_TIMEOUT = 18
+MAX_IMAGE_SEARCH_QUERIES = 4
+
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💄 Подобрать уход")],
@@ -576,6 +581,8 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         )
 
         if recommended_products:
+            product_card_tasks = []
+
             for index, product in enumerate(recommended_products[:5], start=1):
                 product_name = product.get("name", "").strip()
                 product_category = product.get("category", "").strip()
@@ -622,14 +629,19 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                     why=product_why
                 )
 
-                await send_product_card(
-                    message=message,
-                    image_url=image_url,
-                    caption=caption,
-                    keyboard=keyboard,
-                    product_name=product_name,
-                    market_links=links,
-                )
+                product_card_tasks.append(asyncio.create_task(
+                    prepare_product_card(
+                        product_name=product_name,
+                        image_url=image_url,
+                        caption=caption,
+                        keyboard=keyboard,
+                        market_links=links,
+                    )
+                ))
+
+            for task in asyncio.as_completed(product_card_tasks):
+                card = await task
+                await send_prepared_product_card(message, card)
 
         elif search_queries:
             main_query = search_queries[0]
@@ -951,7 +963,7 @@ async def fetch_exact_product_image(
     }
 
     async with httpx.AsyncClient(
-        timeout=20,
+        timeout=IMAGE_FETCH_TIMEOUT,
         follow_redirects=True,
         headers=headers,
         verify=False,
@@ -1090,7 +1102,7 @@ async def _search_yandex_product_image_query(
 
     try:
         async with httpx.AsyncClient(
-            timeout=20,
+            timeout=IMAGE_SEARCH_TIMEOUT,
             follow_redirects=True,
             headers=headers,
             verify=False,
@@ -1156,7 +1168,7 @@ async def _search_product_image_online_query(
 
     try:
         async with httpx.AsyncClient(
-            timeout=20,
+            timeout=IMAGE_SEARCH_TIMEOUT,
             follow_redirects=True,
             headers=headers,
             verify=False,
@@ -1209,7 +1221,7 @@ async def _search_product_image_online_query(
 
 
 async def search_product_image_online(product_name: str) -> tuple[BufferedInputFile | None, str]:
-    for query in _product_image_search_queries(product_name):
+    for query in _product_image_search_queries(product_name)[:MAX_IMAGE_SEARCH_QUERIES]:
         image_file, resolved_url = await _search_yandex_product_image_query(
             product_name,
             query,
@@ -1227,17 +1239,11 @@ async def search_product_image_online(product_name: str) -> tuple[BufferedInputF
     return None, ""
 
 
-async def send_product_card(
-    message: Message,
+async def resolve_product_card_image(
     image_url: str,
-    caption: str,
-    keyboard: InlineKeyboardMarkup,
     product_name: str,
     market_links: dict | None = None,
-) -> None:
-    image_file = None
-    resolved_image_url = ""
-
+) -> tuple[BufferedInputFile | None, str]:
     image_file, resolved_image_url = await fetch_exact_product_image(image_url, product_name)
     if not image_file:
         image_file, resolved_image_url = await find_product_image_from_marketplaces(
@@ -1246,6 +1252,45 @@ async def send_product_card(
         )
     if not image_file:
         image_file, resolved_image_url = await search_product_image_online(product_name)
+
+    return image_file, resolved_image_url
+
+
+async def prepare_product_card(
+    product_name: str,
+    image_url: str,
+    caption: str,
+    keyboard: InlineKeyboardMarkup,
+    market_links: dict | None = None,
+) -> dict:
+    image_file = None
+    resolved_image_url = ""
+
+    try:
+        image_file, resolved_image_url = await asyncio.wait_for(
+            resolve_product_card_image(
+                image_url=image_url,
+                product_name=product_name,
+                market_links=market_links,
+            ),
+            timeout=IMAGE_CARD_TIMEOUT,
+        )
+    except Exception:
+        pass
+
+    return {
+        "caption": caption,
+        "image_file": image_file,
+        "keyboard": keyboard,
+        "product_name": product_name,
+        "resolved_image_url": resolved_image_url,
+    }
+
+
+async def send_prepared_product_card(message: Message, card: dict) -> None:
+    image_file = card.get("image_file")
+    caption = card["caption"]
+    keyboard = card["keyboard"]
 
     if image_file:
         try:
@@ -1264,6 +1309,24 @@ async def send_product_card(
         parse_mode="HTML",
         reply_markup=keyboard,
     )
+
+
+async def send_product_card(
+    message: Message,
+    image_url: str,
+    caption: str,
+    keyboard: InlineKeyboardMarkup,
+    product_name: str,
+    market_links: dict | None = None,
+) -> None:
+    card = await prepare_product_card(
+        product_name=product_name,
+        image_url=image_url,
+        caption=caption,
+        keyboard=keyboard,
+        market_links=market_links,
+    )
+    await send_prepared_product_card(message, card)
 
 
 def get_category_emoji(category: str) -> str:
@@ -1312,15 +1375,22 @@ def get_product_image_url(image_url: str, category: str) -> str:
     return ""
 
 
+def normalize_price_range(price_range: str) -> str:
+    price = str(price_range or "").strip()
+    price = re.sub(r"\s*(?:-|–|—)\s*", " – ", price)
+    price = re.sub(r"\s+", " ", price).strip()
+    return price
+
+
 def format_price_range(price_range: str) -> str:
     if not price_range:
-        return "💵 Цена ориентировочно"
+        return "💵 <b>Цена:</b> ориентировочно"
 
-    price_range = price_range.strip()
-    if not price_range:
-        return "💵 Цена ориентировочно"
+    price = normalize_price_range(price_range)
+    if not price:
+        return "💵 <b>Цена:</b> ориентировочно"
 
-    return f"💵 {html_text(price_range)}"
+    return f"💵 <b>Цена:</b> <code>{html_text(price)}</code>"
 
 
 def build_product_caption(product_name: str, product_category: str, price_range: str, why: str) -> str:

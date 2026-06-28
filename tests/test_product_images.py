@@ -116,6 +116,14 @@ def test_remove_search_query_noise_from_yandex_context():
     assert "Anthelios Shaka" in cleaned
 
 
+def test_format_price_range_uses_code_and_spaced_dash():
+    assert bot.format_price_range("800-1000 ₽") == "💵 <b>Цена:</b> <code>800 – 1000 ₽</code>"
+
+
+def test_product_image_search_queries_are_limited_by_runtime_constant():
+    assert bot.MAX_IMAGE_SEARCH_QUERIES < len(bot._product_image_search_queries("Test Product"))
+
+
 def test_prepare_telegram_photo_converts_webp_to_jpeg():
     image = Image.new("RGB", (32, 32), color="white")
     output = BytesIO()
