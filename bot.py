@@ -3,7 +3,7 @@ import io
 import os
 import re
 import asyncio
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import quote_plus, unquote, urljoin, urlparse
 
 import httpx
 
@@ -703,7 +703,6 @@ def _normalize_product_text(value: str) -> str:
     text = str(value or "").lower()
     replacements = {
         "ё": "е",
-        "uvmune": "uv mune",
         "spf50+": "spf 50",
         "spf30": "spf 30",
         "spf50": "spf 50",
@@ -750,8 +749,25 @@ def _context_matches_product(product_name: str, context: str) -> bool:
         return False
 
     meaningful_tokens = tokens[1:] or tokens
+    numeric_tokens = [token for token in tokens if token.isdigit() and len(token) >= 3]
+    if any(token not in normalized_context for token in numeric_tokens):
+        return False
+
+    distinctive_tokens = [
+        token
+        for token in meaningful_tokens
+        if len(token) >= 5 and not token.isdigit()
+    ]
+    if len(distinctive_tokens) >= 2:
+        distinctive_matches = sum(
+            1 for token in distinctive_tokens
+            if token in normalized_context
+        )
+        if distinctive_matches < 2:
+            return False
+
     matched = sum(1 for token in meaningful_tokens if token in normalized_context)
-    required = 1 if len(tokens) <= 3 else 2
+    required = 1 if len(tokens) <= 3 else max(2, len(meaningful_tokens) // 2)
     return matched >= required
 
 
@@ -938,6 +954,7 @@ async def fetch_exact_product_image(
         timeout=20,
         follow_redirects=True,
         headers=headers,
+        verify=False,
     ) as client:
         try:
             response = await client.get(image_url)
@@ -1002,6 +1019,214 @@ async def find_product_image_from_marketplaces(
     return None, ""
 
 
+def _extract_duckduckgo_vqd(page_html: str) -> str:
+    patterns = [
+        r'vqd=["\']([^"\']+)["\']',
+        r"vqd=([^&'\"]+)",
+        r"vqd\s*:\s*['\"]([^'\"]+)['\"]",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, page_html)
+        if match:
+            return html.unescape(match.group(1))
+    return ""
+
+
+def _decode_search_text(value: str) -> str:
+    value = html.unescape(str(value or ""))
+    try:
+        value = re.sub(
+            r"\\u([0-9a-fA-F]{4})",
+            lambda match: chr(int(match.group(1), 16)),
+            value,
+        )
+    except Exception:
+        pass
+    return value.replace("\\/", "/")
+
+
+def _remove_search_query_noise(context: str) -> str:
+    context = re.sub(r"([?&]|&amp;)(text|q|query)=[^&\"'\s]+", " ", context, flags=re.IGNORECASE)
+    context = re.sub(r"\b(text|q|query)=[^&\"'\s]+", " ", context, flags=re.IGNORECASE)
+    return context
+
+
+def _extract_yandex_image_candidates(page_html: str) -> list[tuple[str, str]]:
+    candidates = []
+    for match in re.finditer(r"&quot;(?:origUrl|img_url)&quot;:&quot;(.*?)&quot;", page_html):
+        raw_url = _decode_search_text(match.group(1))
+        if not is_http_url(raw_url):
+            continue
+
+        context_start = max(0, match.start() - 1800)
+        context_end = min(len(page_html), match.end() + 1800)
+        context = _remove_search_query_noise(
+            _decode_search_text(page_html[context_start:context_end])
+        )
+        candidates.append((raw_url, context))
+
+    seen = set()
+    result = []
+    for image_url, context in candidates:
+        if image_url in seen:
+            continue
+        seen.add(image_url)
+        result.append((image_url, context))
+    return result
+
+
+async def _search_yandex_product_image_query(
+    product_name: str,
+    query: str,
+) -> tuple[BufferedInputFile | None, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0 Safari/537.36"
+        ),
+        "Accept": "text/html,*/*",
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=20,
+            follow_redirects=True,
+            headers=headers,
+            verify=False,
+        ) as client:
+            response = await client.get(
+                "https://yandex.ru/images/search",
+                params={"text": query},
+            )
+            response.raise_for_status()
+            page_html = response.text
+    except Exception:
+        return None, ""
+
+    for image_url, context in _extract_yandex_image_candidates(page_html)[:20]:
+        if not _context_matches_product(product_name, f"{context} {image_url}"):
+            continue
+        image_file, resolved_url = await fetch_exact_product_image(image_url, product_name)
+        if image_file:
+            return image_file, resolved_url
+
+    return None, ""
+
+
+def _duckduckgo_result_matches_product(product_name: str, result: dict) -> bool:
+    context_parts = [
+        result.get("title", ""),
+        result.get("url", ""),
+        result.get("source", ""),
+        result.get("image", ""),
+    ]
+    return _context_matches_product(product_name, " ".join(context_parts))
+
+
+def _product_image_search_queries(product_name: str) -> list[str]:
+    base = str(product_name or "").strip()
+    if not base:
+        return []
+
+    return [
+        f'"{base}"',
+        f'"{base}" official product image',
+        f'"{base}" фото товара',
+        f'"{base}" купить фото',
+        f'"{base}" site:ozon.ru',
+        f'"{base}" site:goldapple.ru',
+        f'"{base}" site:market.yandex.ru',
+        f'"{base}" site:wildberries.ru',
+    ]
+
+
+async def _search_product_image_online_query(
+    product_name: str,
+    query: str,
+) -> tuple[BufferedInputFile | None, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/json,*/*",
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=20,
+            follow_redirects=True,
+            headers=headers,
+            verify=False,
+        ) as client:
+            search_url = (
+                "https://duckduckgo.com/?q="
+                f"{quote_plus(query)}&iar=images&iax=images&ia=images"
+            )
+            search_response = await client.get(search_url)
+            search_response.raise_for_status()
+            vqd = _extract_duckduckgo_vqd(search_response.text)
+            if not vqd:
+                return None, ""
+
+            images_response = await client.get(
+                "https://duckduckgo.com/i.js",
+                params={
+                    "l": "ru-ru",
+                    "o": "json",
+                    "q": query,
+                    "vqd": vqd,
+                    "f": ",,,",
+                    "p": "1",
+                },
+                headers={**headers, "Referer": search_url},
+            )
+            images_response.raise_for_status()
+            data = images_response.json()
+    except Exception:
+        return None, ""
+
+    results = data.get("results", [])
+    if not isinstance(results, list):
+        return None, ""
+
+    candidates = [
+        result for result in results
+        if isinstance(result, dict) and _duckduckgo_result_matches_product(product_name, result)
+    ]
+
+    for result in candidates[:12]:
+        image_url = result.get("image") or result.get("thumbnail")
+        if not image_url:
+            continue
+        image_file, resolved_url = await fetch_exact_product_image(image_url, product_name)
+        if image_file:
+            return image_file, resolved_url
+
+    return None, ""
+
+
+async def search_product_image_online(product_name: str) -> tuple[BufferedInputFile | None, str]:
+    for query in _product_image_search_queries(product_name):
+        image_file, resolved_url = await _search_yandex_product_image_query(
+            product_name,
+            query,
+        )
+        if image_file:
+            return image_file, resolved_url
+
+        image_file, resolved_url = await _search_product_image_online_query(
+            product_name,
+            query,
+        )
+        if image_file:
+            return image_file, resolved_url
+
+    return None, ""
+
+
 async def send_product_card(
     message: Message,
     image_url: str,
@@ -1019,6 +1244,8 @@ async def send_product_card(
             product_name,
             market_links,
         )
+    if not image_file:
+        image_file, resolved_image_url = await search_product_image_online(product_name)
 
     if image_file:
         try:
