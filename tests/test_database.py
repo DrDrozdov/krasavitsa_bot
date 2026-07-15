@@ -70,3 +70,18 @@ def test_user_beauty_state_keeps_last_query_when_only_mode_changes():
     assert state["active_mode"] == "hair"
     assert state["last_query"] == "подбери древесный аромат"
     assert state["last_query_mode"] == "perfume"
+
+
+def test_product_feedback_is_one_current_vote_per_shown_card():
+    product_id = database.save_recommended_product(user_id=1, product_name="COSRX Cleanser")
+    database.save_product_feedback(1, "COSRX Cleanser", "good", recommended_product_id=product_id)
+    database.save_product_feedback(1, "COSRX Cleanser", "bad", recommended_product_id=product_id)
+
+    stats = database.get_product_feedback_stats()
+    assert stats == {"likes": 0, "dislikes": 1, "unique_users": 1}
+
+
+def test_recommended_product_cannot_be_rated_by_another_user():
+    product_id = database.save_recommended_product(user_id=1, product_name="Private Product")
+    assert database.get_recommended_product_name(product_id, user_id=1) == "Private Product"
+    assert database.get_recommended_product_name(product_id, user_id=2) is None

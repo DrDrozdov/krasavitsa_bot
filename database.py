@@ -58,6 +58,14 @@ def init_db():
         cur.execute("ALTER TABLE product_feedback ADD COLUMN product_key TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        cur.execute("ALTER TABLE product_feedback ADD COLUMN recommended_product_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_product_feedback_vote
+        ON product_feedback (user_id, recommended_product_id)
+    """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recommended_products (
@@ -300,15 +308,17 @@ def get_last_recommendation(user_id: int):
         "created_at": row[4]
     }
 
-def save_feedback(rec_id, feedback):
+def save_feedback(rec_id, feedback, user_id: int | None = None):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    cur.execute("""
-        UPDATE recommendations
-        SET feedback = ?
-        WHERE id = ?
-    """, (feedback, rec_id))
+    if user_id is None:
+        cur.execute("UPDATE recommendations SET feedback = ? WHERE id = ?", (feedback, rec_id))
+    else:
+        cur.execute(
+            "UPDATE recommendations SET feedback = ? WHERE id = ? AND user_id = ?",
+            (feedback, rec_id, user_id),
+        )
 
     conn.commit()
     conn.close()
@@ -331,22 +341,40 @@ def get_user_recommendations(user_id: int, limit: int = 5):
 
     return rows
 
-def save_product_feedback(user_id: int, product_name: str, feedback: str):
+def save_product_feedback(
+    user_id: int,
+    product_name: str,
+    feedback: str,
+    recommended_product_id: int | None = None,
+):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
     product_key = normalize_product_name(product_name)
 
-    cur.execute("""
-        INSERT INTO product_feedback (user_id, product_name, product_key, feedback, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        product_name,
-        product_key,
-        feedback,
-        datetime.now().isoformat()
-    ))
+    if recommended_product_id is None:
+        cur.execute("""
+            INSERT INTO product_feedback (user_id, product_name, product_key, feedback, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, product_name, product_key, feedback, datetime.now().isoformat()))
+    else:
+        cur.execute("""
+            INSERT INTO product_feedback (
+                user_id, product_name, product_key, feedback, created_at, recommended_product_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, recommended_product_id) DO UPDATE SET
+                product_name = excluded.product_name,
+                product_key = excluded.product_key,
+                feedback = excluded.feedback,
+                created_at = excluded.created_at
+        """, (
+            user_id,
+            product_name,
+            product_key,
+            feedback,
+            datetime.now().isoformat(),
+            recommended_product_id,
+        ))
 
     conn.commit()
     conn.close()
@@ -393,15 +421,17 @@ def save_recommended_product(user_id: int, product_name: str):
     return product_id
 
 
-def get_recommended_product_name(product_id: int):
+def get_recommended_product_name(product_id: int, user_id: int | None = None):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT product_name
-        FROM recommended_products
-        WHERE id = ?
-    """, (product_id,))
+    if user_id is None:
+        cur.execute("SELECT product_name FROM recommended_products WHERE id = ?", (product_id,))
+    else:
+        cur.execute(
+            "SELECT product_name FROM recommended_products WHERE id = ? AND user_id = ?",
+            (product_id, user_id),
+        )
 
     row = cur.fetchone()
 

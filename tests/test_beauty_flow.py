@@ -74,9 +74,13 @@ def test_every_callback_data_fits_telegram_limit():
 
 def test_mode_choices_use_clear_human_labels():
     labels = [button.text for row in beauty_flow.mode_inline_keyboard("skin").inline_keyboard for button in row]
-    assert "✍️ Написать своими словами" in labels
-    assert "✨ Ответить на вопросы" in labels
+    assert "✍️ Рассказать своими словами" in labels
+    assert "✨ Подобрать по вопросам" in labels
     assert all("анкет" not in label.lower() for label in labels)
+
+
+def test_typewriter_visible_text_removes_html_without_losing_copy():
+    assert beauty_flow.visible_text("💗 <b>Я вас поняла</b>\nТри варианта") == "💗 Я вас поняла\nТри варианта"
 
 
 def test_intro_without_photo_has_no_single_letter_placeholder():

@@ -17,6 +17,8 @@ except ImportError:
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BotCommand,
     FSInputFile,
@@ -54,6 +56,7 @@ from beauty_flow import (
     serialize_answers,
     skip_step,
     start_flow,
+    typewriter_edit,
 )
 
 from database import (
@@ -102,6 +105,10 @@ if admin_ids_str:
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+
+class InputState(StatesGroup):
+    free_request = State()
 
 ACTIVE_MODES: dict[int, str] = {}
 ACTIVE_SEARCH_TASKS: dict[int, asyncio.Task] = {}
@@ -236,29 +243,30 @@ def has_saved_beauty_profile(user_id: int) -> bool:
 
 def welcome_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     intro = (
-        "✦ <b>Красавица — ваш персональный beauty AI</b>\n\n"
-        "Помогаю подобрать уход за кожей и волосами, а ещё найти аромат под настроение, повод и бюджет. "
-        "Учитываю чувствительность, привычки и ограничения, проверяю конкретные товары и показываю только отдельные карточки магазинов.\n\n"
-        "Можно написать запрос своими словами, пройти короткие вопросы или сохранить beauty-профиль — это необязательно."
+        "✦ <b>Привет! Я Красавица — ваша ИИ‑помощница</b> 💗\n\n"
+        "Бережно подберу уход за кожей и волосами или найду аромат под настроение, повод и бюджет. "
+        "Учту чувствительность, привычки и важные ограничения, а затем покажу конкретные товары, реальные цены и прямые карточки магазинов.\n\n"
+        "Можно написать всё своими словами, пройти несколько лёгких вопросов или сохранить личные параметры — только если вам удобно 🌷"
     )
     if has_saved_beauty_profile(user_id):
         return (
-            intro + "\n\n<b>С возвращением 💗</b> Использовать сохранённые параметры или начать заново?",
+            intro + "\n\n<b>С возвращением — как приятно снова вас видеть 💗</b> Учесть сохранённые параметры или начать с чистого листа?",
             InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Использовать мой профиль", callback_data="onboarding:use")],
-                [InlineKeyboardButton(text="Новый подбор", callback_data="onboarding:skip")],
+                [InlineKeyboardButton(text="💾 Учесть мои параметры", callback_data="onboarding:use")],
+                [InlineKeyboardButton(text="✨ Начать новый подбор", callback_data="onboarding:skip")],
             ]),
         )
     return (
-        intro + "\n\n<b>Хотите создать beauty-профиль?</b>",
+        intro + "\n\n<b>Создать профиль и сохранить предпочтения для будущих подборов?</b>",
         InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Создать профиль", callback_data="onboarding:create")],
-            [InlineKeyboardButton(text="Продолжить без профиля", callback_data="onboarding:skip")],
+            [InlineKeyboardButton(text="💗 Сохранить предпочтения", callback_data="onboarding:create")],
+            [InlineKeyboardButton(text="Пока без сохранения", callback_data="onboarding:skip")],
         ]),
     )
 
 @dp.message(CommandStart())
-async def start(message: Message):
+async def start(message: Message, state: FSMContext):
+    await state.clear()
     save_user(
         user_id=message.from_user.id,
         username=message.from_user.username
@@ -276,12 +284,12 @@ async def start(message: Message):
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     text = (
-        "Чтобы подбор был точнее, укажи цель, важные ограничения и бюджет.\n\n"
-        "💧 Кожа: тип, чувствительность, текущий уход и желаемая текстура.\n"
-        "💇‍♀️ Волосы: отдельно кожа головы и длина, окрашивание, укладка.\n"
-        "🌸 Парфюм: любимые и нежелательные ноты, повод, сезон и громкость.\n\n"
-        "Если данных недостаточно, я задам один конкретный вопрос.\n\n"
-        f"Ещё можно спокойно попробовать сайт: {WEBSITE_URL}"
+        "Я помогу, даже если вы пока не знаете точных параметров 💗\n\n"
+        "💧 <b>Кожа:</b> можно указать ощущения, чувствительность, текущий уход и бюджет.\n"
+        "💇‍♀️ <b>Волосы:</b> полезно отдельно описать корни и длину, окрашивание и укладку.\n"
+        "🌸 <b>Парфюм:</b> расскажите о любимых нотах, настроении, поводе или просто попросите варианты.\n\n"
+        "Если чего‑то действительно не хватает для безопасного выбора, я мягко уточню один момент.\n\n"
+        f"А ещё можно открыть сайт «Красавицы»: {WEBSITE_URL}"
     )
 
     await message.answer(text, reply_markup=website_keyboard())
@@ -410,7 +418,7 @@ async def callback_onboarding_create(callback: CallbackQuery):
     ])
     await render_panel(
         callback.message,
-        "<b>Создание beauty-профиля</b>\n\nВыберите направление. Каждый ответ сохранится автоматически, а профиль всегда можно изменить.",
+        "💗 <b>Сохраним ваши предпочтения</b>\n\nВыберите направление. Ответы сохранятся автоматически, и их всегда можно будет изменить.",
         keyboard,
     )
 
@@ -434,29 +442,33 @@ async def callback_onboarding_skip(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data == "menu:main")
-async def callback_main_menu(callback: CallbackQuery):
+async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.answer()
     if callback.message:
         await render_panel(callback.message, main_text(), main_inline_keyboard())
 
 
 @dp.callback_query(F.data == "free:text")
-async def callback_free_text(callback: CallbackQuery):
-    await callback.answer("Можно писать своими словами")
+async def callback_free_text(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(InputState.free_request)
+    await state.update_data(mode="")
+    await callback.answer("Я внимательно прочитаю 💗")
     if callback.message:
         await render_panel(
             callback.message,
-            "⌨️ <b>Свободный запрос</b>\n\nНапишите, что хочется подобрать. Я сама определю направление и задам только действительно важный вопрос.",
-            InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Главное меню", callback_data="menu:main")]]),
+            "✍️ <b>Расскажите, что хочется найти</b>\n\nМожно писать совсем по‑простому: например, «базовый уход до 3 000 ₽» или «лёгкий аромат в подарок». Я дождусь вашего сообщения и только потом начну подбор 💗",
+            InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Отмена", callback_data="menu:main")]]),
         )
 
 
 @dp.callback_query(F.data.startswith("mode:"))
-async def callback_mode(callback: CallbackQuery):
+async def callback_mode(callback: CallbackQuery, state: FSMContext):
     mode = (callback.data or "").split(":", 1)[1]
     if mode not in MODE_LABELS or not callback.message:
         await callback.answer("Направление недоступно", show_alert=True)
         return
+    await state.clear()
     await callback.answer()
     await show_mode_screen(callback.message, callback.from_user.id, mode, edit=True)
 
@@ -472,11 +484,12 @@ async def callback_cancel_search(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data.startswith("guide:"))
-async def callback_guide(callback: CallbackQuery):
+async def callback_guide(callback: CallbackQuery, state: FSMContext):
     mode = (callback.data or "").split(":", 1)[1]
     if mode not in MODE_LABELS or not callback.message:
         await callback.answer("Не удалось открыть сценарий", show_alert=True)
         return
+    await state.clear()
     session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
     session.step = 0
     persist_flow_session(callback.from_user.id, session)
@@ -512,13 +525,21 @@ async def run_callback_search(callback: CallbackQuery, mode: str, query: str) ->
 
 
 @dp.callback_query(F.data.startswith("direct:"))
-async def callback_direct(callback: CallbackQuery):
+async def callback_direct(callback: CallbackQuery, state: FSMContext):
     mode = (callback.data or "").split(":", 1)[1]
-    if mode not in MODE_LABELS:
+    if mode not in MODE_LABELS or not callback.message:
         await callback.answer("Направление недоступно", show_alert=True)
         return
-    await callback.answer("Начинаю подбор")
-    await run_callback_search(callback, mode, build_query(None, mode, exploratory=True))
+    ACTIVE_MODES[callback.from_user.id] = mode
+    save_user_beauty_state(callback.from_user.id, mode)
+    await state.set_state(InputState.free_request)
+    await state.update_data(mode=mode)
+    await callback.answer("Жду ваш запрос 💗")
+    await render_panel(
+        callback.message,
+        f"✍️ <b>{html_text(MODE_LABELS[mode])} · ваш запрос</b>\n\nОпишите задачу, бюджет и то, что особенно важно. Я не начну поиск, пока вы не отправите сообщение.",
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Отмена", callback_data=f"mode:{mode}")]]),
+    )
 
 
 @dp.callback_query(F.data.startswith("flow:"))
@@ -629,7 +650,7 @@ async def callback_use_saved_profile(callback: CallbackQuery):
         return
     session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
     if not session.answers:
-        await callback.answer("Сначала выбери параметры", show_alert=True)
+        await callback.answer("Сначала выберите параметры 💗", show_alert=True)
         return
     await callback.answer("Использую сохранённые параметры")
     await run_callback_search(callback, mode, build_query(session, mode))
@@ -648,6 +669,25 @@ async def callback_repeat_last(callback: CallbackQuery):
         return
     await callback.answer("Повторяю последний подбор")
     await run_callback_search(callback, mode, query)
+
+
+@dp.callback_query(F.data == "refine:cheaper")
+async def callback_find_cheaper(callback: CallbackQuery):
+    if not callback.message:
+        await callback.answer()
+        return
+    saved = get_user_beauty_state(callback.from_user.id) or {}
+    mode = saved.get("last_query_mode") or saved.get("active_mode")
+    query = str(saved.get("last_query") or "").strip()
+    if mode not in MODE_LABELS or not query:
+        await callback.answer("Сначала сделаем один подбор 💗", show_alert=True)
+        return
+    refined = (
+        f"{query}\n\nНайди более доступные альтернативы с теми же задачами. "
+        "Сохрани все исходные ограничения, сравни реальные цены и не предлагай дороже исходных вариантов."
+    )
+    await callback.answer("Ищу варианты нежнее к бюджету 💸")
+    await run_callback_search(callback, mode, refined)
 
 
 @dp.message(F.text == "💧 Кожа")
@@ -783,7 +823,7 @@ async def scenario_gift_perfume(message: Message):
 @dp.message(F.text == "📝 Другое")
 async def scenario_other(message: Message):
     await message.answer(
-        "Опиши, что беспокоит кожу:\n\n"
+        "Расскажите, что хочется изменить в уходе 💗\n\n"
         "Например:\n"
         "«Комбинированная кожа, жирный блеск в Т-зоне, щеки сухие, хочу базовый уход до 3000 ₽»"
     )
@@ -800,8 +840,8 @@ async def another_selection(message: Message):
 async def budget_1000(message: Message):
     update_user_profile(message.from_user.id, budget="до 1000 ₽")
     await message.answer(
-        "Сохранил твой бюджет: <b>до 1000 ₽</b> ✅\n\n"
-        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
+        "Запомнила ваш бюджет: <b>до 1 000 ₽</b> 💗\n\n"
+        "Теперь выберите направление и расскажите задачу — я обязательно его учту.",
         parse_mode="HTML",
         reply_markup=main_inline_keyboard()
     )
@@ -810,8 +850,8 @@ async def budget_1000(message: Message):
 async def budget_3000(message: Message):
     update_user_profile(message.from_user.id, budget="до 3000 ₽")
     await message.answer(
-        "Сохранил твой бюджет: <b>до 3000 ₽</b> ✅\n\n"
-        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
+        "Запомнила ваш бюджет: <b>до 3 000 ₽</b> 💗\n\n"
+        "Теперь выберите направление и расскажите задачу — я обязательно его учту.",
         parse_mode="HTML",
         reply_markup=main_inline_keyboard()
     )
@@ -820,8 +860,8 @@ async def budget_3000(message: Message):
 async def budget_6000(message: Message):
     update_user_profile(message.from_user.id, budget="до 6000 ₽")
     await message.answer(
-        "Сохранил твой бюджет: <b>до 6000 ₽</b> ✅\n\n"
-        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
+        "Запомнила ваш бюджет: <b>до 6 000 ₽</b> 💗\n\n"
+        "Теперь выберите направление и расскажите задачу — я обязательно его учту.",
         parse_mode="HTML",
         reply_markup=main_inline_keyboard()
     )
@@ -830,8 +870,8 @@ async def budget_6000(message: Message):
 async def budget_unlimited(message: Message):
     update_user_profile(message.from_user.id, budget="без ограничений")
     await message.answer(
-        "Сохранил твой бюджет: <b>без ограничений</b> 👑\n\n"
-        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
+        "Запомнила: бюджет <b>без ограничений</b> 👑\n\n"
+        "Теперь выберите направление и расскажите задачу — я обязательно это учту.",
         parse_mode="HTML",
         reply_markup=main_inline_keyboard()
     )
@@ -839,7 +879,7 @@ async def budget_unlimited(message: Message):
 @dp.message(F.text == "💄 Подобрать уход")
 async def choose_care(message: Message):
     await message.answer(
-        "Выбери сценарий или опиши свою проблему:\n\n"
+        "Выберите готовый сценарий или расскажите о задаче своими словами 💗\n\n"
         "💧 <b>Сухость</b> — шелушение, стянутость\n"
         "✨ <b>Жирный блеск</b> — жирная кожа, расширенные поры\n"
         "🌿 <b>Чувствительность</b> — покраснение, раздражение\n"
@@ -914,8 +954,8 @@ async def set_skin_type(message: Message):
     update_user_profile(message.from_user.id, skin_type=skin_type)
 
     await message.answer(
-        f"Сохранил твой тип кожи: <b>{html.escape(skin_type)}</b> ✅\n\n"
-        "Теперь напиши, что беспокоит кожу.",
+        f"Запомнила тип кожи: <b>{html.escape(skin_type)}</b> 💗\n\n"
+        "Теперь расскажите, что хочется подобрать.",
         parse_mode="HTML",
         reply_markup=main_inline_keyboard()
     )
@@ -923,18 +963,18 @@ async def set_skin_type(message: Message):
 @dp.callback_query(F.data.startswith("feedback_good:"))
 async def feedback_good(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
-    save_feedback(rec_id, "good")
+    save_feedback(rec_id, "good", user_id=callback.from_user.id)
 
-    await callback.message.edit_text("Спасибо. Буду чаще учитывать такие рекомендации 👍")
+    await callback.message.edit_text("Спасибо за оценку 💗 Буду чаще учитывать такие рекомендации.")
     await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("feedback_bad:"))
 async def feedback_bad(callback: CallbackQuery):
     rec_id = int(callback.data.split(":")[1])
-    save_feedback(rec_id, "bad")
+    save_feedback(rec_id, "bad", user_id=callback.from_user.id)
 
-    await callback.message.edit_text("Понял. Буду осторожнее с такими вариантами 👎")
+    await callback.message.edit_text("Поняла вас 🌷 Буду осторожнее с похожими вариантами.")
     await callback.answer()
 
 @dp.message(F.text == "📜 Мои подборы")
@@ -942,7 +982,7 @@ async def my_recommendations(message: Message):
     rows = get_user_recommendations(message.from_user.id)
 
     if not rows:
-        await message.answer("У тебя пока нет сохранённых подборов 🌷")
+        await message.answer("У вас пока нет сохранённых подборов 🌷")
         return
 
     text = "📜 <b>Последние подборы</b>\n\n"
@@ -974,7 +1014,7 @@ async def add_favorite(message: Message):
         return
 
     fav_id = save_favorite(message.from_user.id, last["id"], title=None)
-    await message.answer("Сохранил подбор в избранное ✅")
+    await message.answer("Сохранила подбор в избранное 💗")
 
 
 @dp.callback_query(F.data == "favorite:last")
@@ -992,7 +1032,7 @@ async def list_favorites(message: Message):
     rows = get_favorites(message.from_user.id)
 
     if not rows:
-        await message.answer("У тебя пока нет избранного.")
+        await message.answer("В избранном пока пусто 🌷")
         return
 
     for fav_id, rec_id, title, created_at, answer in rows:
@@ -1198,14 +1238,20 @@ def is_thanks_message(text: str) -> bool:
 
 
 def build_thanks_reply() -> str:
-    return "Рада помочь 🙂 Если захочешь ещё подбор — просто напиши, что ищем."
+    return "Рада помочь 💗 Когда захочется попробовать что‑то новое, просто напишите — я рядом."
 
 
-def build_offtopic_reply() -> str:
+def build_offtopic_reply(waiting_for_request: bool = False) -> str:
+    if waiting_for_request:
+        return (
+            "Кажется, я пока не увидела задачу про кожу, волосы или аромат 🌷\n\n"
+            "Попробуйте написать так: «мягкое умывание до 1 500 ₽», «уход для окрашенных волос» "
+            "или «свежий аромат в подарок». Я всё ещё жду ваш запрос и никуда его не отправляла 💗"
+        )
     return (
-        "Я специализируюсь на косметике: коже, волосах и ароматах 🙂\n\n"
-        "Выбери направление кнопкой или опиши beauty-задачу, ограничения и бюджет — я аккуратно помогу.\n\n"
-        f"Если удобнее в браузере, сайт тоже рядом: {WEBSITE_URL}"
+        "Я ваша помощница по косметике: подбираю уход для кожи и волос и рассказываю об ароматах 🌷🙂\n\n"
+        "Напишите, что хочется подобрать, какие есть ограничения и бюджет — я бережно соберу варианты.\n\n"
+        f"А если удобнее в браузере, сайт «Красавицы» тоже рядом: {WEBSITE_URL}"
     )
 
 
@@ -1261,7 +1307,7 @@ async def perform_search(
         beauty_context = saved_answers_context(mode, beauty_profile.get("answers", {}))
         if beauty_context:
             profile_notes.append(
-                "Сохранённый beauty-профиль: " + beauty_context
+                "Сохранённые параметры пользователя: " + beauty_context
                 + ". Если текущий запрос отличается, приоритет у текущего запроса."
             )
         ai_request = text_to_process
@@ -1282,7 +1328,7 @@ async def perform_search(
             if follow_up:
                 reply += f"\n\n<b>Уточни:</b> {html_text(follow_up)}"
             saved_profile = get_beauty_profile(requester_id, mode) or {}
-            await render_panel(
+            await typewriter_edit(
                 status_message,
                 reply,
                 mode_inline_keyboard(mode, has_saved_profile=bool(saved_profile.get("answers"))),
@@ -1290,12 +1336,12 @@ async def perform_search(
             return
 
         answer = f"✨ <b>Красавица · {html_text(MODE_LABELS[mode])}</b>\n\n"
-        answer += f"<b>О вашем запросе</b>\n{html_text(summary)}"
+        answer += f"💗 <b>Я вас поняла</b>\n{html_text(summary)}"
         if insight:
-            answer += f"\n\n💡 <b>Полезно знать</b>\n{html_text(insight)}"
-        answer += f"\n\nПодготовила <b>{min(4, len(products))} варианта</b>. Они появятся ниже сразу один за другим."
+            answer += f"\n\n🌿 <b>Маленькая подсказка</b>\n{html_text(insight)}"
+        answer += f"\n\nНашла <b>{min(4, len(products))} подходящих варианта</b>. Сейчас покажу их вместе — с ценами и прямыми карточками магазинов ✨"
 
-        await render_panel(status_message, answer, search_inline_keyboard())
+        await typewriter_edit(status_message, answer)
         saved_answer = answer + "\n\n" + "\n".join(
             f"• {_as_bot_text(product.get('name'))}" for product in products[:4] if isinstance(product, dict)
         )
@@ -1354,31 +1400,31 @@ async def perform_search(
         for card in prepared_cards:
             await send_prepared_product_card(message, card)
         await safe_edit(status_message, answer, result_inline_keyboard(mode))
-        await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
+        await message.answer("Получилось полезно? Ваша оценка помогает мне становиться точнее 💗", reply_markup=feedback_keyboard)
 
     except asyncio.CancelledError:
         await render_panel(
             status_message,
-            "⛔ <b>Подбор остановлен</b>\n\nТвои ответы сохранены — можно продолжить позже или изменить параметры.",
+            "⛔ <b>Подбор остановлен</b>\n\nЯ сохранила ваши ответы — можно спокойно вернуться позже или немного изменить параметры 💗",
             mode_inline_keyboard(mode, has_saved_profile=bool((get_beauty_profile(requester_id, mode) or {}).get("answers"))),
         )
     except BeautyServiceBusyError:
         await render_panel(
             status_message,
-            "⏳ <b>Сервис подбора занят</b>\n\nПараметры уже сохранены. Нажми «Повторить запрос» через минуту — заполнять анкету заново не потребуется.",
+            "⏳ <b>Мне нужна ещё минутка</b>\n\nПараметры уже сохранены. Нажмите «Повторить запрос» чуть позже — отвечать заново не придётся 💗",
             retry_keyboard(mode),
         )
     except ValueError:
         saved_profile = get_beauty_profile(requester_id, mode) or {}
         await render_panel(
             status_message,
-            "Не получилось завершить проверку источников. Параметры сохранены — можно повторить подбор или изменить ответы.",
+            "Не все магазины ответили вовремя 🌷 Параметры сохранены — можно повторить подбор или немного изменить запрос.",
             mode_inline_keyboard(mode, has_saved_profile=bool(saved_profile.get("answers"))),
         )
     except Exception as error:
         await render_panel(
             status_message,
-            "Не получилось завершить проверку. Попробуй ещё раз или уточни запрос.",
+            "Что‑то задержало проверку 🌷 Запрос сохранён: можно повторить его или чуть уточнить.",
             retry_keyboard(mode),
         )
         print(error)
@@ -1443,25 +1489,41 @@ async def handle_voice(message: Message):
 
 
 @dp.message(F.text)
-async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
+async def handle_text(
+    message: Message,
+    user_text: str | None = None,
+    loading_msg: Message | None = None,
+    state: FSMContext | None = None,
+):
     text_to_process = (user_text or message.text or "").strip()
     user_id = message.from_user.id
+    waiting_for_request = bool(state and await state.get_state() == InputState.free_request.state)
     if user_text is None and text_to_process.startswith("/"):
+        if state:
+            await state.clear()
         await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
         return
-    if user_text is None and is_thanks_message(text_to_process):
+    if user_text is None and not waiting_for_request and is_thanks_message(text_to_process):
         await message.answer(build_thanks_reply(), reply_markup=main_inline_keyboard())
         return
+    input_data = await state.get_data() if waiting_for_request and state else {}
     saved_state = get_user_beauty_state(user_id) or {}
     mode = (
         detect_mode(text_to_process)
+        or input_data.get("mode")
         or ACTIVE_MODES.get(user_id)
         or saved_state.get("active_mode")
         or "skin"
     )
     if not await passes_shared_relevance_gate(text_to_process, mode):
-        await message.answer(build_offtopic_reply(), reply_markup=main_inline_keyboard())
+        keyboard = (
+            InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Отмена", callback_data="menu:main")]])
+            if waiting_for_request else main_inline_keyboard()
+        )
+        await message.answer(build_offtopic_reply(waiting_for_request), reply_markup=keyboard)
         return
+    if waiting_for_request and state:
+        await state.clear()
     await perform_search(
         message=message,
         requester_id=user_id,
@@ -2222,7 +2284,7 @@ def build_product_caption(
 @dp.callback_query(F.data.startswith("product_good:"))
 async def product_good(callback: CallbackQuery):
     product_id = int(callback.data.replace("product_good:", ""))
-    product_name = get_recommended_product_name(product_id)
+    product_name = get_recommended_product_name(product_id, user_id=callback.from_user.id)
 
     if not product_name:
         await callback.answer("Не удалось найти средство")
@@ -2231,16 +2293,17 @@ async def product_good(callback: CallbackQuery):
     save_product_feedback(
         user_id=callback.from_user.id,
         product_name=product_name,
-        feedback="good"
+        feedback="good",
+        recommended_product_id=product_id,
     )
 
-    await callback.answer("Сохранил: средство подошло 👍")
+    await callback.answer("Запомнила: вариант понравился 💗")
 
 
 @dp.callback_query(F.data.startswith("product_bad:"))
 async def product_bad(callback: CallbackQuery):
     product_id = int(callback.data.replace("product_bad:", ""))
-    product_name = get_recommended_product_name(product_id)
+    product_name = get_recommended_product_name(product_id, user_id=callback.from_user.id)
 
     if not product_name:
         await callback.answer("Не удалось найти средство")
@@ -2249,16 +2312,17 @@ async def product_bad(callback: CallbackQuery):
     save_product_feedback(
         user_id=callback.from_user.id,
         product_name=product_name,
-        feedback="bad"
+        feedback="bad",
+        recommended_product_id=product_id,
     )
 
-    await callback.answer("Сохранил: средство не подошло 👎")
+    await callback.answer("Запомнила: этот вариант не подошёл 🌷")
 
 @dp.message(F.text == "/admin_stats")
 async def admin_stats(message: Message):
     # Проверка доступа
     if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ У тебя нет доступа к этой команде.")
+        await message.answer("❌ У вас нет доступа к этой команде.")
         return
 
     # Получение статистики
@@ -2275,7 +2339,7 @@ async def admin_stats(message: Message):
     text += f"<b>Пользователи:</b>\n👥 Всего: {total_users}\n\n"
     text += f"<b>Активных пользователей:</b>\n👤 С рекомендациями: {min(total_users, total_recommendations or 0)}\n\n"
 
-    text += f"<b>Запросы к AI:</b>\n🤖 Всего рекомендаций: {total_recommendations}\n"
+    text += f"<b>Запросы к поисковому ядру:</b>\n🤖 Всего рекомендаций: {total_recommendations}\n"
     text += f"🛍️ Всего товаров сохранено: {total_recommended_products}\n\n"
 
     text += f"<b>Оценки подборов:</b>\n"
@@ -2305,8 +2369,8 @@ async def main():
     init_db()
     await bot.set_my_description(
         description=(
-            "Красавица — персональный beauty-помощник. Подбираю уход за кожей и волосами, "
-            "а также парфюм. Профиль можно сохранить, использовать повторно или пропустить."
+            "Красавица — ваша бережная ИИ‑помощница. Подбираю уход за кожей и волосами, "
+            "а ещё ароматы. Предпочтения можно сохранить, использовать снова или не сохранять вовсе."
         ),
         language_code="ru",
     )

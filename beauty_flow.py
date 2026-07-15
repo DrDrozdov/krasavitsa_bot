@@ -1,4 +1,7 @@
 import asyncio
+import html
+import math
+import re
 from dataclasses import dataclass, field
 
 from aiogram.enums import ChatAction
@@ -241,8 +244,8 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🌸 Парфюм", callback_data="mode:perfume"),
         ],
         [
-            InlineKeyboardButton(text="✍️ Свой запрос", callback_data="free:text"),
-            InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat:last"),
+            InlineKeyboardButton(text="✍️ Написать свой запрос", callback_data="free:text"),
+            InlineKeyboardButton(text="🔁 Повторить подбор", callback_data="repeat:last"),
         ],
         [InlineKeyboardButton(text="✨ Сайт Красавицы", url="https://krasavitsa-ai.ru/")],
     ])
@@ -250,8 +253,8 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
 
 def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKeyboardMarkup:
     rows = [[
-        InlineKeyboardButton(text="✍️ Написать своими словами", callback_data=f"direct:{mode}"),
-        InlineKeyboardButton(text="✨ Ответить на вопросы", callback_data=f"guide:{mode}"),
+        InlineKeyboardButton(text="✍️ Рассказать своими словами", callback_data=f"direct:{mode}"),
+        InlineKeyboardButton(text="✨ Подобрать по вопросам", callback_data=f"guide:{mode}"),
     ]]
     if has_saved_profile:
         rows.append([InlineKeyboardButton(text="💾 Мои сохранённые параметры", callback_data=f"saved:{mode}")])
@@ -264,6 +267,10 @@ def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKe
 def result_inline_keyboard(mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="♡ Сохранить подбор", callback_data="favorite:last")],
+        [
+            InlineKeyboardButton(text="💸 Найти дешевле", callback_data="refine:cheaper"),
+            InlineKeyboardButton(text="✍️ Уточнить запрос", callback_data=f"direct:{mode}"),
+        ],
         [
             InlineKeyboardButton(text="✨ Новый подбор", callback_data=f"mode:{mode}"),
             InlineKeyboardButton(text="💾 Мои параметры", callback_data=f"saved:{mode}"),
@@ -280,23 +287,23 @@ def search_inline_keyboard() -> InlineKeyboardMarkup:
 
 def main_text() -> str:
     return (
-        "✦ <b>Красавица</b>\n\n"
-        "Персональный подбор для кожи, волос и парфюмерии.\n"
-        "Можно пройти короткий сценарий или сразу написать запрос своими словами.\n\n"
-        "<b>Что подбираем?</b>"
+        "✦ <b>Красавица рядом</b> 💗\n\n"
+        "Бережно подберу уход за кожей и волосами или парфюм под ваше настроение. "
+        "Можно ответить на несколько лёгких вопросов или просто написать всё своими словами.\n\n"
+        "<b>С чего начнём?</b>"
     )
 
 
 def mode_text(mode: str) -> str:
     descriptions = {
-        "skin": "Соберём базовый уход, отдельное средство или понятный сценарий без лишних банок.",
-        "hair": "Разделим потребности кожи головы и длины, учтём окрашивание, завиток и укладку.",
-        "perfume": "Подберём аромат по характеру, случаю и бюджету — пол можно не указывать.",
+        "skin": "Соберём понятный базовый уход или найдём одно нужное средство — без лишних баночек 🌿",
+        "hair": "Отдельно учтём кожу головы и длину, окрашивание, завиток и любимую укладку ✨",
+        "perfume": "Найдём аромат по настроению, случаю и бюджету. Пол можно совсем не указывать 🌸",
     }
     return (
         f"{MODE_ICONS[mode]} <b>{MODE_LABELS[mode]}</b>\n\n"
         f"{descriptions[mode]}\n\n"
-        "Начать сразу или ответить на несколько коротких вопросов?"
+        "Хотите рассказать своими словами или пройти мягкий мини‑подбор?"
     )
 
 
@@ -340,7 +347,7 @@ def get_session(user_id: int, mode: str | None = None) -> FlowSession | None:
 def flow_text(session: FlowSession) -> str:
     step = FLOW_STEPS[session.mode][session.step]
     chosen = [option.label for option in session.answers.values()]
-    context = f"\n\nУже выбрано: {' · '.join(chosen)}" if chosen else ""
+    context = f"\n\n💗 Уже учла: {' · '.join(chosen)}" if chosen else ""
     return (
         f"{MODE_ICONS[session.mode]} <b>{MODE_LABELS[session.mode]}</b>\n"
         f"<code>{step.eyebrow}</code>\n\n"
@@ -363,7 +370,7 @@ def flow_keyboard(session: FlowSession) -> InlineKeyboardMarkup:
         ])
     rows.append([
         InlineKeyboardButton(text="Пропустить", callback_data=f"skip:{session.mode}:{session.step}"),
-        InlineKeyboardButton(text="Подобрать сейчас", callback_data=f"finish:{session.mode}"),
+        InlineKeyboardButton(text="Уже можно подбирать ✨", callback_data=f"finish:{session.mode}"),
     ])
     rows.append([
         InlineKeyboardButton(
@@ -468,6 +475,32 @@ async def safe_edit(
         return False
 
 
+def visible_text(value: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", str(value or ""))).strip()
+
+
+async def typewriter_edit(
+    message: Message,
+    final_text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    """Imitate streaming without exceeding Telegram edit-rate limits."""
+    plain = visible_text(final_text)
+    if len(plain) < 24:
+        await safe_edit(message, final_text, reply_markup)
+        return
+    steps = max(6, min(14, math.ceil(len(plain) / 34)))
+    chunk = max(1, math.ceil(len(plain) / steps))
+    for end in range(chunk, len(plain) + chunk, chunk):
+        prefix = plain[: min(end, len(plain))]
+        cursor = "" if len(prefix) >= len(plain) else " ▍"
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+        await safe_edit(message, f"{html.escape(prefix)}{cursor}")
+        if len(prefix) < len(plain):
+            await asyncio.sleep(0.11)
+    await safe_edit(message, final_text, reply_markup)
+
+
 async def animate_intro(
     message: Message,
     welcome_photo=None,
@@ -476,8 +509,8 @@ async def animate_intro(
     panel_keyboard: InlineKeyboardMarkup | None = None,
 ) -> Message:
     welcome_caption = panel_text or (
-        "✦ <b>Красавица — ваш beauty AI</b>\n\n"
-        "Подбираю уход за кожей и волосами, а ещё ароматы — с учётом запроса, бюджета и важных ограничений."
+        "✦ <b>Красавица — ваша ИИ‑помощница</b> 💗\n\n"
+        "Бережно подбираю уход за кожей и волосами, а ещё ароматы — с учётом бюджета, привычек и важных ограничений."
     )
     try:
         cleanup = await message.answer("Обновляю меню…", reply_markup=ReplyKeyboardRemove())
@@ -522,16 +555,16 @@ async def animate_intro(
 
 
 SEARCH_PHASES = {
-    "skin": ("Разбираю состояние кожи и цель", "Сверяю ограничения и бюджет", "Проверяю средства и магазины", "Готовлю три точные карточки"),
-    "hair": ("Разделяю задачи кожи головы и длины", "Сверяю ограничения и бюджет", "Проверяю средства и магазины", "Готовлю три точные карточки"),
-    "perfume": ("Собираю ароматный профиль", "Сравниваю характеры и концентрации", "Проверяю ароматы и магазины", "Готовлю три точные карточки"),
+    "skin": ("Бережно разбираю потребности кожи", "Учитываю бюджет и ограничения", "Сверяю средства и цены", "Собираю красивые карточки"),
+    "hair": ("Разделяю потребности корней и длины", "Учитываю бюджет и привычки", "Сверяю средства и цены", "Собираю красивые карточки"),
+    "perfume": ("Собираю настроение аромата", "Сравниваю ноты и характер", "Сверяю ароматы и цены", "Собираю красивые карточки"),
 }
 
 SEARCH_HINTS = (
-    "Сначала понимаю задачу — без случайных советов.",
-    "Исключаю то, что конфликтует с запросом.",
-    "Оставляю только отдельные карточки товаров.",
-    "Изображения и цены готовятся одновременно.",
+    "Сначала хочу действительно понять вас 💗",
+    "Убираю всё, что точно не подойдёт.",
+    "Оставляю только прямые карточки товаров.",
+    "Картинки и цены уже почти готовы ✨",
 )
 
 
@@ -546,22 +579,22 @@ async def animate_search(
     while not done.is_set():
         phase_index = min(tick, len(phases) - 1)
         text = (
-            "✦ <b>Красавица подбирает</b>\n\n"
+            "✦ <b>Красавица подбирает</b> ···\n\n"
             f"{phases[phase_index]}\n"
             f"<i>{SEARCH_HINTS[phase_index]}</i>\n\n"
-            f"<code>{phase_index + 1} / {len(phases)}</code>"
+            f"<code>{'●' * (phase_index + 1)}{'○' * (len(phases) - phase_index - 1)}</code>"
         )
         await status_message.bot.send_chat_action(chat_id=status_message.chat.id, action=ChatAction.TYPING)
         await safe_edit(status_message, text, keyboard)
         tick += 1
         try:
-            await asyncio.wait_for(done.wait(), timeout=2.2)
+            await asyncio.wait_for(done.wait(), timeout=1.8)
         except asyncio.TimeoutError:
             continue
 
 
 def all_callback_data() -> list[str]:
-    values = ["menu:main", "free:text", "repeat:last", "retry:last", "search:cancel", "favorite:last"]
+    values = ["menu:main", "free:text", "repeat:last", "retry:last", "refine:cheaper", "search:cancel", "favorite:last"]
     for mode, steps in FLOW_STEPS.items():
         values.extend((
             f"mode:{mode}", f"direct:{mode}", f"guide:{mode}", f"finish:{mode}",
