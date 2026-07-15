@@ -345,7 +345,11 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
     if _shared_endpoint() and now >= _SHARED_ENGINE_RETRY_AT:
         try:
             shared = await _call_shared_engine(user_text, mode)
-            if shared.get("status") == "complete" and shared.get("products"):
+            if (
+                shared.get("status") == "complete"
+                and shared.get("products")
+                and shared.get("methodology") != "curated-fallback"
+            ):
                 return shared
             if shared.get("status") == "safety_redirect":
                 return shared

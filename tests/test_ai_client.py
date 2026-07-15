@@ -81,3 +81,29 @@ def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
     assert result["status"] == "complete"
     assert result["methodology"] == "curated-fallback"
     assert len(result["products"]) >= 1
+
+
+def test_shared_curated_fallback_does_not_mask_working_local_ai(monkeypatch):
+    monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
+    monkeypatch.setattr(ai_client, "_LOCAL_ENGINE_RETRY_AT", 0.0)
+    monkeypatch.setattr(
+        ai_client,
+        "_call_shared_engine",
+        AsyncMock(return_value={
+            "status": "complete",
+            "products": [{"name": "Starter"}],
+            "methodology": "curated-fallback",
+        }),
+    )
+    local_result = {
+        "status": "complete",
+        "products": [{"name": "Personal result"}],
+        "methodology": "grounded-v2",
+    }
+    local = AsyncMock(return_value=local_result)
+    monkeypatch.setattr(ai_client, "_local_pipeline", local)
+
+    result = asyncio.run(ai_client.ask_deepseek("Нужен аромат", "perfume"))
+
+    assert result is local_result
+    local.assert_awaited_once()
