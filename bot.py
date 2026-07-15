@@ -294,6 +294,17 @@ def retry_keyboard(mode: str) -> InlineKeyboardMarkup:
     ])
 
 
+def profile_modes_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Кожа", callback_data="saved:skin"),
+            InlineKeyboardButton(text="Волосы", callback_data="saved:hair"),
+            InlineKeyboardButton(text="Парфюм", callback_data="saved:perfume"),
+        ],
+        [InlineKeyboardButton(text="Главное меню", callback_data="menu:main")],
+    ])
+
+
 @dp.message(Command("pick"))
 async def pick_command(message: Message):
     save_user(user_id=message.from_user.id, username=message.from_user.username)
@@ -313,6 +324,15 @@ async def hair_command(message: Message):
 @dp.message(Command("perfume"))
 async def perfume_command(message: Message):
     await show_mode_screen(message, message.from_user.id, "perfume")
+
+
+@dp.message(Command("profile"))
+async def profile_command(message: Message):
+    await message.answer(
+        "<b>Мои параметры</b>\n\nВыбери направление — покажу всё, что уже сохранено.",
+        parse_mode="HTML",
+        reply_markup=profile_modes_keyboard(),
+    )
 
 
 @dp.callback_query(F.data == "menu:main")
@@ -2052,6 +2072,7 @@ async def main():
         BotCommand(command="skin", description="Подбор ухода за кожей"),
         BotCommand(command="hair", description="Подбор ухода за волосами"),
         BotCommand(command="perfume", description="Подбор парфюма"),
+        BotCommand(command="profile", description="Мои сохранённые параметры"),
         BotCommand(command="help", description="Как получить точный результат"),
         BotCommand(command="site", description="Открыть сайт"),
     ])
