@@ -3,6 +3,8 @@ import io
 import os
 import re
 import asyncio
+from contextlib import suppress
+from pathlib import Path
 from urllib.parse import quote_plus, unquote, urljoin, urlparse
 
 import httpx
@@ -13,7 +15,10 @@ except ImportError:
     Image = None
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ChatAction
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
+    BotCommand,
     Message,
     CallbackQuery,
     BufferedInputFile,
@@ -24,6 +29,25 @@ from aiogram.types import (
 )
 
 from ai_client import ask_deepseek
+from beauty_flow import (
+    MODE_LABELS,
+    animate_intro,
+    animate_search,
+    build_query,
+    choose_option,
+    flow_keyboard,
+    flow_text,
+    get_session,
+    main_inline_keyboard,
+    main_text,
+    mode_inline_keyboard,
+    mode_text,
+    previous_step,
+    result_inline_keyboard,
+    safe_edit,
+    skip_step,
+    start_flow,
+)
 
 from database import (
     init_db,
@@ -51,6 +75,7 @@ from database import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBSITE_URL = "https://krasavitsa-ai.ru/"
+BASE_DIR = Path(__file__).resolve().parent
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN НЕ НАЙДЕН В RAILWAY VARIABLES")
@@ -68,16 +93,16 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 ACTIVE_MODES: dict[int, str] = {}
-MODE_LABELS = {
-    "skin": "Кожа",
-    "hair": "Волосы",
-    "perfume": "Парфюм",
+MODE_ASSET_PATHS = {
+    "skin": BASE_DIR / "assets" / "skin-packshot-v2.webp",
+    "hair": BASE_DIR / "assets" / "hair-packshot-v2.webp",
+    "perfume": BASE_DIR / "assets" / "perfume-packshot-v2.webp",
 }
 
-IMAGE_FETCH_TIMEOUT = 8
-IMAGE_SEARCH_TIMEOUT = 8
-IMAGE_CARD_TIMEOUT = 18
-MAX_IMAGE_SEARCH_QUERIES = 4
+IMAGE_FETCH_TIMEOUT = 4
+IMAGE_SEARCH_TIMEOUT = 4
+IMAGE_CARD_TIMEOUT = 5
+MAX_IMAGE_SEARCH_QUERIES = 1
 
 
 def website_keyboard() -> InlineKeyboardMarkup:
@@ -186,27 +211,16 @@ perfume_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-@dp.message(F.text == "/start")
+@dp.message(CommandStart())
 async def start(message: Message):
     save_user(
         user_id=message.from_user.id,
         username=message.from_user.username
     )
-
-    text = (
-        "Привет! Я «Красавица» — персональный beauty-помощник.\n\n"
-        "Подбираю уход за кожей, волосами и парфюмерию. Каждый товар проходит проверку существования, а кнопки ведут только на отдельные карточки — не на общий поиск.\n\n"
-        "Выбери направление или сразу опиши, что ищешь."
-    )
-
-    await message.answer(text, reply_markup=main_menu)
-    await message.answer(
-        build_website_note(),
-        reply_markup=website_keyboard()
-    )
+    await animate_intro(message)
 
 
-@dp.message(F.text == "/help")
+@dp.message(Command("help"))
 async def help_cmd(message: Message):
     text = (
         "Чтобы подбор был точнее, укажи цель, важные ограничения и бюджет.\n\n"
@@ -220,7 +234,7 @@ async def help_cmd(message: Message):
     await message.answer(text, reply_markup=website_keyboard())
 
 
-@dp.message(F.text == "/site")
+@dp.message(Command("site"))
 async def site_cmd(message: Message):
     await message.answer(
         build_website_note(),
@@ -228,34 +242,179 @@ async def site_cmd(message: Message):
     )
 
 
+async def show_mode_screen(message: Message, user_id: int, mode: str, edit: bool = False) -> None:
+    ACTIVE_MODES[user_id] = mode
+    if edit:
+        await safe_edit(message, mode_text(mode), mode_inline_keyboard(mode))
+    else:
+        await message.answer(mode_text(mode), parse_mode="HTML", reply_markup=mode_inline_keyboard(mode))
+
+
+@dp.message(Command("pick"))
+async def pick_command(message: Message):
+    await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
+
+
+@dp.message(Command("skin"))
+async def skin_command(message: Message):
+    await show_mode_screen(message, message.from_user.id, "skin")
+
+
+@dp.message(Command("hair"))
+async def hair_command(message: Message):
+    await show_mode_screen(message, message.from_user.id, "hair")
+
+
+@dp.message(Command("perfume"))
+async def perfume_command(message: Message):
+    await show_mode_screen(message, message.from_user.id, "perfume")
+
+
+@dp.callback_query(F.data == "menu:main")
+async def callback_main_menu(callback: CallbackQuery):
+    await callback.answer()
+    if callback.message:
+        await safe_edit(callback.message, main_text(), main_inline_keyboard())
+
+
+@dp.callback_query(F.data == "free:text")
+async def callback_free_text(callback: CallbackQuery):
+    await callback.answer("Можно писать своими словами")
+    if callback.message:
+        await safe_edit(
+            callback.message,
+            "⌨️ <b>Свободный запрос</b>\n\nНапишите, что хочется подобрать. Я сама определю направление и задам только действительно важный вопрос.",
+            InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Главное меню", callback_data="menu:main")]]),
+        )
+
+
+@dp.callback_query(F.data.startswith("mode:"))
+async def callback_mode(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS or not callback.message:
+        await callback.answer("Направление недоступно", show_alert=True)
+        return
+    await callback.answer()
+    await show_mode_screen(callback.message, callback.from_user.id, mode, edit=True)
+
+
+@dp.callback_query(F.data.startswith("guide:"))
+async def callback_guide(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS or not callback.message:
+        await callback.answer("Не удалось открыть сценарий", show_alert=True)
+        return
+    session = start_flow(callback.from_user.id, mode)
+    ACTIVE_MODES[callback.from_user.id] = mode
+    await callback.answer()
+    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+
+
+async def run_callback_search(callback: CallbackQuery, mode: str, query: str) -> None:
+    if not callback.message:
+        return
+    ACTIVE_MODES[callback.from_user.id] = mode
+    await safe_edit(callback.message, f"{MODE_LABELS[mode]}\n\nНачинаю персональный подбор…")
+    await perform_search(
+        message=callback.message,
+        requester_id=callback.from_user.id,
+        requester_username=callback.from_user.username,
+        text_to_process=query,
+        mode=mode,
+        status_message=callback.message,
+    )
+
+
+@dp.callback_query(F.data.startswith("direct:"))
+async def callback_direct(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS:
+        await callback.answer("Направление недоступно", show_alert=True)
+        return
+    await callback.answer("Начинаю подбор")
+    await run_callback_search(callback, mode, build_query(None, mode, exploratory=True))
+
+
+@dp.callback_query(F.data.startswith("flow:"))
+async def callback_flow_option(callback: CallbackQuery):
+    parts = (callback.data or "").split(":", 3)
+    if len(parts) != 4 or parts[1] not in MODE_LABELS or not callback.message:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    mode, step_text, value = parts[1], parts[2], parts[3]
+    try:
+        step_index = int(step_text)
+    except ValueError:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    session, complete = choose_option(callback.from_user.id, mode, step_index, value)
+    await callback.answer("Выбрано")
+    if complete:
+        await run_callback_search(callback, mode, build_query(session, mode))
+        return
+    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+
+
+@dp.callback_query(F.data.startswith("skip:"))
+async def callback_skip_step(callback: CallbackQuery):
+    parts = (callback.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in MODE_LABELS or not callback.message:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    mode = parts[1]
+    try:
+        step_index = int(parts[2])
+    except ValueError:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    session, complete = skip_step(callback.from_user.id, mode, step_index)
+    await callback.answer("Пропущено")
+    if complete:
+        await run_callback_search(callback, mode, build_query(session, mode, exploratory=True))
+        return
+    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+
+
+@dp.callback_query(F.data.startswith("back:"))
+async def callback_previous_step(callback: CallbackQuery):
+    parts = (callback.data or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in MODE_LABELS or not callback.message:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    try:
+        step_index = int(parts[2])
+    except ValueError:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    session = previous_step(callback.from_user.id, parts[1], step_index)
+    await callback.answer()
+    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+
+
+@dp.callback_query(F.data.startswith("finish:"))
+async def callback_finish_flow(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS:
+        await callback.answer("Направление недоступно", show_alert=True)
+        return
+    session = get_session(callback.from_user.id, mode)
+    await callback.answer("Собираю варианты")
+    await run_callback_search(callback, mode, build_query(session, mode, exploratory=True))
+
+
 @dp.message(F.text == "💧 Кожа")
 async def choose_skin_mode(message: Message):
-    ACTIVE_MODES[message.from_user.id] = "skin"
-    await message.answer(
-        "<b>Кожа</b>\n\nОпиши тип кожи, что беспокоит, текущий уход и ограничения — или выбери быстрый сценарий.",
-        parse_mode="HTML",
-        reply_markup=scenarios_menu,
-    )
+    await show_mode_screen(message, message.from_user.id, "skin")
 
 
 @dp.message(F.text == "💇‍♀️ Волосы")
 async def choose_hair_mode(message: Message):
-    ACTIVE_MODES[message.from_user.id] = "hair"
-    await message.answer(
-        "<b>Волосы</b>\n\nРасскажи отдельно о коже головы и длине: частота мытья, окрашивание, завиток, нагрев и цель.",
-        parse_mode="HTML",
-        reply_markup=hair_menu,
-    )
+    await show_mode_screen(message, message.from_user.id, "hair")
 
 
 @dp.message(F.text == "🌸 Парфюм")
 async def choose_perfume_mode(message: Message):
-    ACTIVE_MODES[message.from_user.id] = "perfume"
-    await message.answer(
-        "<b>Парфюм</b>\n\nНазови любимые и нежелательные ноты или ароматы, повод, сезон, желаемую громкость и бюджет.",
-        parse_mode="HTML",
-        reply_markup=perfume_menu,
-    )
+    await show_mode_screen(message, message.from_user.id, "perfume")
 
 # Обработчики быстрых сценариев
 async def run_scenario(message: Message, loading_text: str, prompt: str):
@@ -383,14 +542,11 @@ async def scenario_other(message: Message):
 
 @dp.message(F.text == "◀️ В главное меню")
 async def back_to_main_menu(message: Message):
-    await message.answer("Выбери действие:", reply_markup=main_menu)
+    await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
 
 @dp.message(F.text == "🔄 Ещё подбор")
 async def another_selection(message: Message):
-    await message.answer(
-        "Выбери направление нового подбора:",
-        reply_markup=main_menu
-    )
+    await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
 
 @dp.message(F.text == "до 1000 ₽")
 async def budget_1000(message: Message):
@@ -775,24 +931,22 @@ def detect_mode(text: str) -> str | None:
     return None
 
 
-@dp.message(F.text)
-async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
-    text_to_process = (user_text or message.text or "").strip()
-    user_id = message.from_user.id
-    if user_text is None and is_thanks_message(text_to_process):
-        await message.answer(build_thanks_reply(), reply_markup=main_menu)
-        return
-    if user_text is None and user_id not in ACTIVE_MODES and not is_cosmetic_request(text_to_process):
-        await message.answer(build_offtopic_reply(), reply_markup=main_menu)
-        return
-
-    mode = detect_mode(text_to_process) or ACTIVE_MODES.get(user_id, "skin")
-    ACTIVE_MODES[user_id] = mode
-    if loading_msg is None:
-        loading_msg = await message.answer(f"Проверяю запрос: {MODE_LABELS[mode].lower()}…")
-
+async def perform_search(
+    message: Message,
+    requester_id: int,
+    requester_username: str | None,
+    text_to_process: str,
+    mode: str,
+    status_message: Message | None = None,
+) -> None:
+    save_user(user_id=requester_id, username=requester_username)
+    ACTIVE_MODES[requester_id] = mode
+    if status_message is None:
+        status_message = await message.answer(f"Проверяю запрос: {MODE_LABELS[mode].lower()}…")
+    animation_done = asyncio.Event()
+    animation_task = asyncio.create_task(animate_search(status_message, mode, animation_done))
     try:
-        saved_profile = get_user_profile(user_id) or {}
+        saved_profile = get_user_profile(requester_id) or {}
         profile_notes = []
         if saved_profile.get("budget"):
             profile_notes.append(f"Сохранённый бюджет на один товар: {saved_profile['budget']}")
@@ -806,12 +960,15 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         follow_up = _as_bot_text(data.get("followUpQuestion"))
         products = data.get("products") if isinstance(data.get("products"), list) else []
 
-        await loading_msg.delete()
+        animation_done.set()
+        animation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await animation_task
         if data.get("status") != "complete" or not products:
             reply = f"<b>{html_text(MODE_LABELS[mode])}</b>\n\n{html_text(summary)}"
             if follow_up:
                 reply += f"\n\n<b>Уточни:</b> {html_text(follow_up)}"
-            await message.answer(reply, parse_mode="HTML", reply_markup=main_menu)
+            await safe_edit(status_message, reply, mode_inline_keyboard(mode))
             return
 
         answer = f"✨ <b>Красавица · {html_text(MODE_LABELS[mode])}</b>\n\n"
@@ -828,14 +985,12 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                 answer += f"  {html_text(category)}\n"
         answer += "\nПроцент — соответствие твоему запросу, а не рейтинг магазина."
 
-        await message.answer(answer, parse_mode="HTML", reply_markup=result_menu)
-        rec_id = save_recommendation(user_id=user_id, user_request=text_to_process, answer=answer)
+        await safe_edit(status_message, answer, result_inline_keyboard(mode))
+        rec_id = save_recommendation(user_id=requester_id, user_request=text_to_process, answer=answer)
         feedback_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
             InlineKeyboardButton(text="👎 Не подошло", callback_data=f"feedback_bad:{rec_id}"),
         ]])
-        await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
-
         product_card_tasks = []
         for product in products[:4]:
             if not isinstance(product, dict):
@@ -854,7 +1009,7 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                 for item in link_items
                 if isinstance(item, dict) and is_http_url(_as_bot_text(item.get("href")))
             }
-            product_id = save_recommended_product(user_id=user_id, product_name=product_name)
+            product_id = save_recommended_product(user_id=requester_id, product_name=product_name)
             link_buttons = [InlineKeyboardButton(text=label, url=url) for label, url in list(links.items())[:4]]
             buttons = [link_buttons[index:index + 2] for index in range(0, len(link_buttons), 2)]
             buttons.append([
@@ -877,24 +1032,50 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
                 caption=caption,
                 keyboard=keyboard,
                 market_links=links,
+                mode=mode,
             )))
 
         for task in asyncio.as_completed(product_card_tasks):
             await send_prepared_product_card(message, await task)
+        await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
 
     except ValueError as error:
-        try:
-            await loading_msg.delete()
-        except Exception:
-            pass
-        await message.answer(str(error), reply_markup=main_menu)
+        await safe_edit(status_message, html_text(str(error)), mode_inline_keyboard(mode))
     except Exception as error:
-        try:
-            await loading_msg.delete()
-        except Exception:
-            pass
-        await message.answer("Не получилось завершить проверку. Попробуй ещё раз или уточни запрос.", reply_markup=main_menu)
+        await safe_edit(
+            status_message,
+            "Не получилось завершить проверку. Попробуй ещё раз или уточни запрос.",
+            mode_inline_keyboard(mode),
+        )
         print(error)
+    finally:
+        animation_done.set()
+        if not animation_task.done():
+            animation_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await animation_task
+
+
+@dp.message(F.text)
+async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
+    text_to_process = (user_text or message.text or "").strip()
+    user_id = message.from_user.id
+    if user_text is None and is_thanks_message(text_to_process):
+        await message.answer(build_thanks_reply(), reply_markup=main_inline_keyboard())
+        return
+    if user_text is None and user_id not in ACTIVE_MODES and not is_cosmetic_request(text_to_process):
+        await message.answer(build_offtopic_reply(), reply_markup=main_inline_keyboard())
+        return
+
+    mode = detect_mode(text_to_process) or ACTIVE_MODES.get(user_id, "skin")
+    await perform_search(
+        message=message,
+        requester_id=user_id,
+        requester_username=message.from_user.username,
+        text_to_process=text_to_process,
+        mode=mode,
+        status_message=loading_msg,
+    )
 
 
 def _as_bot_text(value, limit: int = 700) -> str:
@@ -1450,16 +1631,25 @@ async def resolve_product_card_image(
     product_name: str,
     market_links: dict | None = None,
 ) -> tuple[BufferedInputFile | None, str]:
+    # Exact source image first. Broad image search is intentionally excluded from
+    # the critical path: it was slow and could attach a visually similar product.
     image_file, resolved_image_url = await fetch_exact_product_image(image_url, product_name)
     if not image_file:
         image_file, resolved_image_url = await find_product_image_from_marketplaces(
             product_name,
             market_links,
         )
-    if not image_file:
-        image_file, resolved_image_url = await search_product_image_online(product_name)
-
     return image_file, resolved_image_url
+
+
+def load_mode_fallback_image(mode: str, product_name: str) -> BufferedInputFile | None:
+    asset_path = MODE_ASSET_PATHS.get(mode)
+    if not asset_path or not asset_path.is_file():
+        return None
+    try:
+        return _prepare_telegram_photo(asset_path.read_bytes(), "image/webp", product_name)
+    except OSError:
+        return None
 
 
 async def prepare_product_card(
@@ -1468,6 +1658,7 @@ async def prepare_product_card(
     caption: str,
     keyboard: InlineKeyboardMarkup,
     market_links: dict | None = None,
+    mode: str = "skin",
 ) -> dict:
     image_file = None
     resolved_image_url = ""
@@ -1483,6 +1674,10 @@ async def prepare_product_card(
         )
     except Exception:
         pass
+
+    if image_file is None:
+        image_file = load_mode_fallback_image(mode, product_name)
+        resolved_image_url = f"local:{mode}"
 
     return {
         "caption": caption,
@@ -1500,6 +1695,7 @@ async def send_prepared_product_card(message: Message, card: dict) -> None:
 
     if image_file:
         try:
+            await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
             await message.answer_photo(
                 photo=image_file,
                 caption=trim_text(caption, 1024),
@@ -1524,6 +1720,7 @@ async def send_product_card(
     keyboard: InlineKeyboardMarkup,
     product_name: str,
     market_links: dict | None = None,
+    mode: str = "skin",
 ) -> None:
     card = await prepare_product_card(
         product_name=product_name,
@@ -1531,6 +1728,7 @@ async def send_product_card(
         caption=caption,
         keyboard=keyboard,
         market_links=market_links,
+        mode=mode,
     )
     await send_prepared_product_card(message, card)
 
@@ -1707,10 +1905,18 @@ async def admin_stats(message: Message):
 
 async def main():
     init_db()
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Открыть Красавицу"),
+        BotCommand(command="pick", description="Начать новый подбор"),
+        BotCommand(command="skin", description="Подбор ухода за кожей"),
+        BotCommand(command="hair", description="Подбор ухода за волосами"),
+        BotCommand(command="perfume", description="Подбор парфюма"),
+        BotCommand(command="help", description="Как получить точный результат"),
+        BotCommand(command="site", description="Открыть сайт"),
+    ])
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(
         bot,
-        skip_updates=True,
         allowed_updates=["message", "callback_query"]
     )
 

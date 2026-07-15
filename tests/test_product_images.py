@@ -137,3 +137,10 @@ def test_prepare_telegram_photo_converts_webp_to_jpeg():
 
     assert result is not None
     assert result.filename == "Test_Product.jpg"
+
+
+def test_every_mode_has_a_branded_fallback_image():
+    for mode in ("skin", "hair", "perfume"):
+        result = bot.load_mode_fallback_image(mode, "Test Product")
+        assert result is not None
+        assert result.filename == "Test_Product.jpg"
