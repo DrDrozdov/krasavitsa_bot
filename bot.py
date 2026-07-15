@@ -24,12 +24,12 @@ from aiogram.types import (
 )
 
 from ai_client import ask_deepseek
-from links import make_market_links
 
 from database import (
     init_db,
     save_user,
     update_user_profile,
+    get_user_profile,
     save_recommendation,
     get_user_recommendations,
     save_feedback,
@@ -67,6 +67,13 @@ if admin_ids_str:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+ACTIVE_MODES: dict[int, str] = {}
+MODE_LABELS = {
+    "skin": "Кожа",
+    "hair": "Волосы",
+    "perfume": "Парфюм",
+}
+
 IMAGE_FETCH_TIMEOUT = 8
 IMAGE_SEARCH_TIMEOUT = 8
 IMAGE_CARD_TIMEOUT = 18
@@ -87,18 +94,18 @@ def build_website_note() -> str:
 
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💄 Подобрать уход")],
         [
-            KeyboardButton(text="🧴 Мой тип кожи"),
-            KeyboardButton(text="💰 Бюджет")
+            KeyboardButton(text="💧 Кожа"),
+            KeyboardButton(text="💇‍♀️ Волосы"),
+            KeyboardButton(text="🌸 Парфюм"),
         ],
         [
-            KeyboardButton(text="🛒 Где искать"),
-            KeyboardButton(text="📜 Мои подборы")
+            KeyboardButton(text="💰 Бюджет"),
+            KeyboardButton(text="📜 Мои подборы"),
         ],
         [
-            KeyboardButton(text="⚠️ Когда к врачу"),
-            KeyboardButton(text="ℹ️ Помощь")
+            KeyboardButton(text="📂 Избранное"),
+            KeyboardButton(text="ℹ️ Помощь"),
         ],
     ],
     resize_keyboard=True
@@ -149,10 +156,6 @@ result_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="📜 Мои подборы")
         ],
         [
-            KeyboardButton(text="💰 Бюджет"),
-            KeyboardButton(text="🛒 Где искать")
-        ],
-        [
             KeyboardButton(text="🔖 В избранное"),
             KeyboardButton(text="📂 Избранное")
         ],
@@ -163,6 +166,26 @@ result_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+hair_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🫧 Жирные корни"), KeyboardButton(text="🎨 Окрашенная длина")],
+        [KeyboardButton(text="➰ Кудри и пористость"), KeyboardButton(text="🔥 Термозащита")],
+        [KeyboardButton(text="✍️ Свой запрос о волосах")],
+        [KeyboardButton(text="◀️ В главное меню")],
+    ],
+    resize_keyboard=True,
+)
+
+perfume_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🫧 Чистый мускус"), KeyboardButton(text="🌿 Несладкая свежесть")],
+        [KeyboardButton(text="🌙 Вечерний аромат"), KeyboardButton(text="🎁 Аромат в подарок")],
+        [KeyboardButton(text="✍️ Свой запрос об аромате")],
+        [KeyboardButton(text="◀️ В главное меню")],
+    ],
+    resize_keyboard=True,
+)
+
 @dp.message(F.text == "/start")
 async def start(message: Message):
     save_user(
@@ -171,9 +194,9 @@ async def start(message: Message):
     )
 
     text = (
-        "Привет! Я «Красавица» — AI-помощник по подбору базового косметического ухода.\n\n"
-        "Я могу подобрать не лекарственный уход, предложить категории средств и дать ссылки на маркетплейсы.\n\n"
-        "Выбери действие кнопкой ниже или просто напиши, что беспокоит кожу."
+        "Привет! Я «Красавица» — персональный beauty-помощник.\n\n"
+        "Подбираю уход за кожей, волосами и парфюмерию. Каждый товар проходит проверку существования, а кнопки ведут только на отдельные карточки — не на общий поиск.\n\n"
+        "Выбери направление или сразу опиши, что ищешь."
     )
 
     await message.answer(text, reply_markup=main_menu)
@@ -186,12 +209,11 @@ async def start(message: Message):
 @dp.message(F.text == "/help")
 async def help_cmd(message: Message):
     text = (
-        "Опиши кожу по схеме:\n\n"
-        "1. Тип кожи: сухая / жирная / комбинированная / чувствительная.\n"
-        "2. Что беспокоит: сухость, шелушение, блеск, покраснение и т.д.\n"
-        "3. Что уже используешь.\n"
-        "4. Есть ли аллергия или раздражение.\n\n"
-        "Пример: «Комбинированная кожа, жирный блеск в Т-зоне, щеки сухие, хочу базовый уход».\n\n"
+        "Чтобы подбор был точнее, укажи цель, важные ограничения и бюджет.\n\n"
+        "💧 Кожа: тип, чувствительность, текущий уход и желаемая текстура.\n"
+        "💇‍♀️ Волосы: отдельно кожа головы и длина, окрашивание, укладка.\n"
+        "🌸 Парфюм: любимые и нежелательные ноты, повод, сезон и громкость.\n\n"
+        "Если данных недостаточно, я задам один конкретный вопрос.\n\n"
         f"Ещё можно спокойно попробовать сайт: {WEBSITE_URL}"
     )
 
@@ -203,6 +225,36 @@ async def site_cmd(message: Message):
     await message.answer(
         build_website_note(),
         reply_markup=website_keyboard()
+    )
+
+
+@dp.message(F.text == "💧 Кожа")
+async def choose_skin_mode(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "skin"
+    await message.answer(
+        "<b>Кожа</b>\n\nОпиши тип кожи, что беспокоит, текущий уход и ограничения — или выбери быстрый сценарий.",
+        parse_mode="HTML",
+        reply_markup=scenarios_menu,
+    )
+
+
+@dp.message(F.text == "💇‍♀️ Волосы")
+async def choose_hair_mode(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "hair"
+    await message.answer(
+        "<b>Волосы</b>\n\nРасскажи отдельно о коже головы и длине: частота мытья, окрашивание, завиток, нагрев и цель.",
+        parse_mode="HTML",
+        reply_markup=hair_menu,
+    )
+
+
+@dp.message(F.text == "🌸 Парфюм")
+async def choose_perfume_mode(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "perfume"
+    await message.answer(
+        "<b>Парфюм</b>\n\nНазови любимые и нежелательные ноты или ароматы, повод, сезон, желаемую громкость и бюджет.",
+        parse_mode="HTML",
+        reply_markup=perfume_menu,
     )
 
 # Обработчики быстрых сценариев
@@ -266,6 +318,61 @@ async def scenario_spf(message: Message):
         "Ищу хороший крем с SPF для ежедневного использования. Подбери варианты."
     )
 
+
+@dp.message(F.text == "🫧 Жирные корни")
+async def scenario_oily_scalp(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "hair"
+    await run_scenario(message, "Проверяю уход для кожи головы и длины…", "Кожа головы быстро жирнится, длина не обязательно жирная. Подбери деликатный базовый уход и уточни недостающие данные.")
+
+
+@dp.message(F.text == "🎨 Окрашенная длина")
+async def scenario_colored_hair(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "hair"
+    await run_scenario(message, "Проверяю уход для окрашенной длины…", "Окрашенные волосы, нужна защита длины от сухости и ломкости. Подбери базовый уход без лечебных обещаний.")
+
+
+@dp.message(F.text == "➰ Кудри и пористость")
+async def scenario_curly_hair(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "hair"
+    await run_scenario(message, "Собираю уход для завитка…", "Кудрявые пористые волосы, хочу выраженный завиток без тяжёлого перегруза. Подбери базовые категории и средства.")
+
+
+@dp.message(F.text == "🔥 Термозащита")
+async def scenario_heat_protection(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "hair"
+    await run_scenario(message, "Проверяю термозащиту…", "Регулярно использую горячую укладку. Нужна термозащита и поддерживающий уход для длины.")
+
+
+@dp.message(F.text.in_({"✍️ Свой запрос о волосах", "✍️ Свой запрос об аромате"}))
+async def scenario_custom_mode(message: Message):
+    mode = "hair" if "волос" in message.text.lower() else "perfume"
+    ACTIVE_MODES[message.from_user.id] = mode
+    await message.answer("Опиши запрос свободно. Чем точнее предпочтения, ограничения и бюджет, тем надёжнее подбор.")
+
+
+@dp.message(F.text == "🫧 Чистый мускус")
+async def scenario_clean_musk(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "perfume"
+    await run_scenario(message, "Ищу проверенные чистые мускусы…", "Хочу чистый мягкий мускусный аромат без выраженной сладости. Нужен вариант на каждый день.")
+
+
+@dp.message(F.text == "🌿 Несладкая свежесть")
+async def scenario_fresh_perfume(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "perfume"
+    await run_scenario(message, "Ищу несладкую свежесть…", "Хочу свежий несладкий аромат без резкой бытовой или акватической ноты.")
+
+
+@dp.message(F.text == "🌙 Вечерний аромат")
+async def scenario_evening_perfume(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "perfume"
+    await run_scenario(message, "Собираю вечернее направление…", "Нужен выразительный вечерний аромат. Сначала учти желаемые ноты, сезон, громкость и бюджет.")
+
+
+@dp.message(F.text == "🎁 Аромат в подарок")
+async def scenario_gift_perfume(message: Message):
+    ACTIVE_MODES[message.from_user.id] = "perfume"
+    await run_scenario(message, "Проверяю варианты для подарка…", "Ищу аромат в подарок. Нужен осторожный подбор с вопросом о любимых нотах, возраст не используй как жёсткий фильтр.")
+
 @dp.message(F.text == "📝 Другое")
 async def scenario_other(message: Message):
     await message.answer(
@@ -281,8 +388,8 @@ async def back_to_main_menu(message: Message):
 @dp.message(F.text == "🔄 Ещё подбор")
 async def another_selection(message: Message):
     await message.answer(
-        "Выбери сценарий или напиши свою проблему:",
-        reply_markup=scenarios_menu
+        "Выбери направление нового подбора:",
+        reply_markup=main_menu
     )
 
 @dp.message(F.text == "до 1000 ₽")
@@ -290,7 +397,7 @@ async def budget_1000(message: Message):
     update_user_profile(message.from_user.id, budget="до 1000 ₽")
     await message.answer(
         "Сохранил твой бюджет: <b>до 1000 ₽</b> ✅\n\n"
-        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
         reply_markup=main_menu
     )
@@ -300,7 +407,7 @@ async def budget_3000(message: Message):
     update_user_profile(message.from_user.id, budget="до 3000 ₽")
     await message.answer(
         "Сохранил твой бюджет: <b>до 3000 ₽</b> ✅\n\n"
-        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
         reply_markup=main_menu
     )
@@ -310,7 +417,7 @@ async def budget_6000(message: Message):
     update_user_profile(message.from_user.id, budget="до 6000 ₽")
     await message.answer(
         "Сохранил твой бюджет: <b>до 6000 ₽</b> ✅\n\n"
-        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
         reply_markup=main_menu
     )
@@ -320,7 +427,7 @@ async def budget_unlimited(message: Message):
     update_user_profile(message.from_user.id, budget="без ограничений")
     await message.answer(
         "Сохранил твой бюджет: <b>без ограничений</b> 👑\n\n"
-        "Теперь напиши проблему кожи, и я подберу подходящие средства.",
+        "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
         reply_markup=main_menu
     )
@@ -368,13 +475,8 @@ async def budget(message: Message):
 @dp.message(F.text == "🛒 Где искать")
 async def where_to_search(message: Message):
     await message.answer(
-        "Я даю ссылки на поиск средств в:\n\n"
-        "• Яндекс Маркете\n"
-        "• Золотом Яблоке\n"
-        "• Ozon\n"
-        "• Wildberries\n"
-        "• Лэтуаль\n"
-        "• Рив Гош\n\n"
+        "Я показываю кнопку только тогда, когда удалось подтвердить отдельную карточку конкретного товара.\n\n"
+        "Общие страницы поиска и категории намеренно не выдаются: если точную карточку подтвердить нельзя, ссылки в результате не будет.\n\n"
         f"А ещё можно открыть сайт проекта: {WEBSITE_URL}",
         reply_markup=website_keyboard()
     )
@@ -568,6 +670,24 @@ COSMETIC_REQUEST_KEYWORDS = {
     "угр",
     "уход",
     "шелуш",
+    "волос",
+    "кожа головы",
+    "шампун",
+    "кондиционер",
+    "порист",
+    "кудр",
+    "окраш",
+    "ломк",
+    "термозащит",
+    "аромат",
+    "парфюм",
+    "духи",
+    "нота",
+    "шлейф",
+    "мускус",
+    "ваниль",
+    "древес",
+    "цитрус",
     "spf",
     "uv",
 }
@@ -635,215 +755,150 @@ def build_thanks_reply() -> str:
 
 def build_offtopic_reply() -> str:
     return (
-        "Я лучше всего разбираюсь в косметике, уходе и скоро — в ароматах 🙂\n\n"
-        "Напиши, что хочешь подобрать: крем, SPF, очищение, сыворотку, средство под бюджет "
-        "или конкретный запрос — и я аккуратно помогу.\n\n"
+        "Я специализируюсь на косметике: коже, волосах и ароматах 🙂\n\n"
+        "Выбери направление кнопкой или опиши beauty-задачу, ограничения и бюджет — я аккуратно помогу.\n\n"
         f"Если удобнее в браузере, сайт тоже рядом: {WEBSITE_URL}"
     )
 
 
+def detect_mode(text: str) -> str | None:
+    normalized = normalize_user_request_text(text)
+    perfume_words = ("аромат", "парфюм", "духи", "нота", "шлейф", "мускус", "ваниль", "цитрус")
+    hair_words = ("волос", "кожа головы", "шампун", "кондиционер", "кудр", "порист", "окраш", "термозащит")
+    skin_words = ("кожа", "лицо", "крем", "сыворот", "очищ", "акне", "spf")
+    if any(word in normalized for word in perfume_words):
+        return "perfume"
+    if any(word in normalized for word in hair_words):
+        return "hair"
+    if any(word in normalized for word in skin_words):
+        return "skin"
+    return None
+
+
 @dp.message(F.text)
 async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
-    text_to_process = user_text or message.text
-    if user_text is None and not is_cosmetic_request(text_to_process):
-        reply_text = build_thanks_reply() if is_thanks_message(text_to_process) else build_offtopic_reply()
-        await message.answer(reply_text, reply_markup=main_menu)
+    text_to_process = (user_text or message.text or "").strip()
+    user_id = message.from_user.id
+    if user_text is None and is_thanks_message(text_to_process):
+        await message.answer(build_thanks_reply(), reply_markup=main_menu)
+        return
+    if user_text is None and user_id not in ACTIVE_MODES and not is_cosmetic_request(text_to_process):
+        await message.answer(build_offtopic_reply(), reply_markup=main_menu)
         return
 
+    mode = detect_mode(text_to_process) or ACTIVE_MODES.get(user_id, "skin")
+    ACTIVE_MODES[user_id] = mode
     if loading_msg is None:
-        loading_msg = await message.answer("Подбираю базовый уход и ссылки на маркетплейсы...")
+        loading_msg = await message.answer(f"Проверяю запрос: {MODE_LABELS[mode].lower()}…")
 
     try:
-        data = await ask_deepseek(text_to_process)
-
-        summary = data.get("summary", "")
-        morning = data.get("morning", [])
-        evening = data.get("evening", [])
-        recommended_products = data.get("recommended_products", [])
-        search_queries = data.get("search_queries", [])
-        avoid = data.get("avoid", [])
-        warning = data.get("warning", "")
-
-        answer = "💄 <b>Красавица подобрала базовый уход</b>\n\n"
-        answer += f"<b>Что учла по запросу:</b>\n{html_text(summary)}\n\n"
-
-        answer += "<b>Утро:</b>\n"
-        for item in morning:
-            answer += f"• {html_text(item)}\n"
-
-        answer += "\n<b>Вечер:</b>\n"
-        for item in evening:
-            answer += f"• {html_text(item)}\n"
-
-        if recommended_products:
-            answer += "\n<b>Конкретные варианты:</b>\n"
-
-            for product in recommended_products[:5]:
-                name = product.get("name", "")
-                category = product.get("category", "")
-                why = product.get("why", "")
-
-                answer += f"• <b>{html_text(name)}</b>\n"
-
-                if category:
-                    answer += f"  {html_text(category)}\n"
-
-                if why:
-                    answer += f"  {html_text(why)}\n"
-
-        answer += "\n<b>Что искать:</b>\n"
-        for item in search_queries:
-            answer += f"• {html_text(item)}\n"
-
-        if avoid:
-            answer += "\n<b>Чего лучше избегать:</b>\n"
-            for item in avoid:
-                answer += f"• {html_text(item)}\n"
-
-        if warning:
-            answer += f"\n<b>Важно:</b>\n{html_text(warning)}"
+        saved_profile = get_user_profile(user_id) or {}
+        profile_notes = []
+        if saved_profile.get("budget"):
+            profile_notes.append(f"Сохранённый бюджет на один товар: {saved_profile['budget']}")
+        if mode == "skin" and saved_profile.get("skin_type"):
+            profile_notes.append(f"Сохранённый тип кожи: {saved_profile['skin_type']}")
+        ai_request = text_to_process
+        if profile_notes:
+            ai_request += "\n\nКонтекст профиля, который тоже нужно учесть:\n" + "\n".join(profile_notes)
+        data = await ask_deepseek(ai_request, mode=mode)
+        summary = _as_bot_text(data.get("summary"))
+        follow_up = _as_bot_text(data.get("followUpQuestion"))
+        products = data.get("products") if isinstance(data.get("products"), list) else []
 
         await loading_msg.delete()
+        if data.get("status") != "complete" or not products:
+            reply = f"<b>{html_text(MODE_LABELS[mode])}</b>\n\n{html_text(summary)}"
+            if follow_up:
+                reply += f"\n\n<b>Уточни:</b> {html_text(follow_up)}"
+            await message.answer(reply, parse_mode="HTML", reply_markup=main_menu)
+            return
 
-        sent_answer = await message.answer(
-            answer,
-            parse_mode="HTML",
-            reply_markup=result_menu
-        )
+        answer = f"✨ <b>Красавица · {html_text(MODE_LABELS[mode])}</b>\n\n"
+        answer += f"<b>Что учла:</b>\n{html_text(summary)}\n\n"
+        answer += "<b>Проверенные варианты:</b>\n"
+        for product in products[:4]:
+            if not isinstance(product, dict):
+                continue
+            name = _as_bot_text(product.get("name"))
+            category = _as_bot_text(product.get("category"))
+            score = max(0, min(100, int(product.get("matchScore") or 0)))
+            answer += f"• <b>{html_text(name)}</b> · {score}%\n"
+            if category:
+                answer += f"  {html_text(category)}\n"
+        answer += "\nПроцент — соответствие твоему запросу, а не рейтинг магазина."
 
-        rec_id = save_recommendation(
-            user_id=message.from_user.id,
-            user_request=text_to_process,
-            answer=answer
-        )
+        await message.answer(answer, parse_mode="HTML", reply_markup=result_menu)
+        rec_id = save_recommendation(user_id=user_id, user_request=text_to_process, answer=answer)
+        feedback_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
+            InlineKeyboardButton(text="👎 Не подошло", callback_data=f"feedback_bad:{rec_id}"),
+        ]])
+        await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
 
-        feedback_keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
-                    InlineKeyboardButton(text="👎 Не подошло", callback_data=f"feedback_bad:{rec_id}")
-                ]
-            ]
-        )
-
-        await message.answer(
-            "Оцени подбор — так «Красавица» станет точнее.",
-            reply_markup=feedback_keyboard
-        )
-
-        if recommended_products:
-            product_card_tasks = []
-
-            for index, product in enumerate(recommended_products[:5], start=1):
-                product_name = product.get("name", "").strip()
-                product_category = product.get("category", "").strip()
-                product_price = product.get("price_range", "").strip()
-                product_why = product.get("why", "").strip()
-                product_image = product.get("image_url", "").strip()
-
-                if not product_name:
-                    continue
-
-                links = make_market_links(product_name)
-
-                product_id = save_recommended_product(
-                    user_id=message.from_user.id,
-                    product_name=product_name
-                )
-
-                buttons = [
-                    [
-                        InlineKeyboardButton(text="Яндекс", url=links["Яндекс Маркет"]),
-                        InlineKeyboardButton(text="Ozon", url=links["Ozon"]),
-                    ],
-                    [
-                        InlineKeyboardButton(text="WB", url=links["Wildberries"]),
-                        InlineKeyboardButton(text="ЗЯ", url=links["Золотое Яблоко"]),
-                    ],
-                    [
-                        InlineKeyboardButton(text="Лэтуаль", url=links["Лэтуаль"]),
-                        InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
-                    ],
-                    [
-                        InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}"),
-                        InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id}"),
-                    ],
-                ]
-
-                keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-                image_url = get_product_image_url(product_image, product_category)
-                caption = build_product_caption(
-                    product_name=product_name,
-                    product_category=product_category,
-                    price_range=product_price,
-                    why=product_why
-                )
-
-                product_card_tasks.append(asyncio.create_task(
-                    prepare_product_card(
-                        product_name=product_name,
-                        image_url=image_url,
-                        caption=caption,
-                        keyboard=keyboard,
-                        market_links=links,
-                    )
-                ))
-
-            for task in asyncio.as_completed(product_card_tasks):
-                card = await task
-                await send_prepared_product_card(message, card)
-
-        elif search_queries:
-            main_query = search_queries[0]
-            links = make_market_links(main_query)
-
-            buttons = [
-                [
-                    InlineKeyboardButton(text="Яндекс", url=links["Яндекс Маркет"]),
-                    InlineKeyboardButton(text="Ozon", url=links["Ozon"]),
-                ],
-                [
-                    InlineKeyboardButton(text="WB", url=links["Wildberries"]),
-                    InlineKeyboardButton(text="ЗЯ", url=links["Золотое Яблоко"]),
-                ],
-                [
-                    InlineKeyboardButton(text="Лэтуаль", url=links["Лэтуаль"]),
-                    InlineKeyboardButton(text="Рив Гош", url=links["Рив Гош"]),
-                ],
-            ]
-
+        product_card_tasks = []
+        for product in products[:4]:
+            if not isinstance(product, dict):
+                continue
+            product_name = _as_bot_text(product.get("name"))
+            if not product_name:
+                continue
+            product_category = _as_bot_text(product.get("category"))
+            product_reason = _as_bot_text(product.get("reason"))
+            product_usage = _as_bot_text(product.get("usage"))
+            tradeoffs = product.get("tradeoffs") if isinstance(product.get("tradeoffs"), list) else []
+            score = max(0, min(100, int(product.get("matchScore") or 0)))
+            link_items = product.get("marketplaces") if isinstance(product.get("marketplaces"), list) else []
+            links = {
+                _as_bot_text(item.get("label")): _as_bot_text(item.get("href"))
+                for item in link_items
+                if isinstance(item, dict) and is_http_url(_as_bot_text(item.get("href")))
+            }
+            product_id = save_recommended_product(user_id=user_id, product_name=product_name)
+            link_buttons = [InlineKeyboardButton(text=label, url=url) for label, url in list(links.items())[:4]]
+            buttons = [link_buttons[index:index + 2] for index in range(0, len(link_buttons), 2)]
+            buttons.append([
+                InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}"),
+                InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id}"),
+            ])
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-            await message.answer(
-                f"🔎 <b>Искать:</b> {html_text(main_query)}",
-                parse_mode="HTML",
-                reply_markup=keyboard,
+            image_url = next(iter(links.values()), "")
+            caption = build_product_caption(
+                product_name=product_name,
+                product_category=product_category,
+                match_score=score,
+                why=product_reason,
+                usage=product_usage,
+                tradeoffs=tradeoffs,
             )
+            product_card_tasks.append(asyncio.create_task(prepare_product_card(
+                product_name=product_name,
+                image_url=image_url,
+                caption=caption,
+                keyboard=keyboard,
+                market_links=links,
+            )))
 
-            await message.answer(
-                "Выбери следующий шаг:",
-                reply_markup=result_menu
-            )
+        for task in asyncio.as_completed(product_card_tasks):
+            await send_prepared_product_card(message, await task)
 
-    except ValueError as e:
+    except ValueError as error:
         try:
             await loading_msg.delete()
         except Exception:
             pass
-
-        await message.answer(str(e))
-    except Exception as e:
+        await message.answer(str(error), reply_markup=main_menu)
+    except Exception as error:
         try:
             await loading_msg.delete()
         except Exception:
             pass
+        await message.answer("Не получилось завершить проверку. Попробуй ещё раз или уточни запрос.", reply_markup=main_menu)
+        print(error)
 
-        await message.answer(
-            "Не получилось обработать запрос. Проверь API-ключ DeepSeek или попробуй переформулировать вопрос."
-        )
 
-        print(e)
+def _as_bot_text(value, limit: int = 700) -> str:
+    return str(value or "").strip()[:limit]
 
 
 def html_text(value) -> str:
@@ -1544,16 +1599,27 @@ def format_price_range(price_range: str) -> str:
     return f"💵 <b>Цена:</b> <code>{html_text(price)}</code>"
 
 
-def build_product_caption(product_name: str, product_category: str, price_range: str, why: str) -> str:
+def build_product_caption(
+    product_name: str,
+    product_category: str,
+    match_score: int,
+    why: str,
+    usage: str = "",
+    tradeoffs: list | None = None,
+) -> str:
     emoji = get_category_emoji(product_category)
     category_text = html_text(product_category or "Средство")
     product_text = html_text(product_name)
     title = f"{emoji} <b>{category_text}</b>\n<code>{product_text}</code>"
-    price_text = format_price_range(price_range)
-
-    caption = f"{title}\n\n{price_text}"
+    caption = f"{title}\n\n🎯 <b>Соответствие запросу:</b> {max(0, min(100, match_score))}%"
     if why:
         caption += f"\n\n{html_text(why)}"
+    if usage:
+        caption += f"\n\n<b>Как использовать или тестировать:</b>\n{html_text(usage)}"
+    clean_tradeoffs = [html_text(item) for item in (tradeoffs or []) if str(item or "").strip()]
+    if clean_tradeoffs:
+        caption += f"\n\n<b>Важно:</b> {(' · '.join(clean_tradeoffs))}"
+    caption += "\n\nСсылки ниже ведут только на проверенные отдельные карточки."
 
     return caption
 
