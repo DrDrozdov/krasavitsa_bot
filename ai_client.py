@@ -4,7 +4,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote_plus, unquote, urlparse
 
 import httpx
 from dotenv import load_dotenv
@@ -292,6 +292,32 @@ def _link_label(url: str, fallback: str) -> str:
     return next((label for marker, label in labels.items() if marker in host), fallback or "Карточка товара")
 
 
+async def _discover_marketplace_urls(client: httpx.AsyncClient, product_name: str) -> list[tuple[str, str, str]]:
+    sites = " OR ".join(f"site:{host}" for host in sorted(DEFAULT_ALLOWED_HOSTS))
+    query = quote_plus(f'"{product_name}" ({sites})')
+    try:
+        response = await client.get(
+            f"https://html.duckduckgo.com/html/?q={query}",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; KrasavitsaProductDiscovery/3.0)"},
+        )
+        if response.status_code >= 400:
+            return []
+    except httpx.RequestError:
+        return []
+    result = []
+    for match in re.finditer(r"uddg=([^&\"']+)", response.text, flags=re.IGNORECASE):
+        try:
+            url = _direct_url(unquote(match.group(1)))
+        except ValueError:
+            continue
+        if not url or any(existing[1] == url for existing in result):
+            continue
+        result.append((_link_label(url, "Маркетплейс"), url, "marketplace"))
+        if len(result) >= 12:
+            break
+    return result
+
+
 async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
     name = _as_text(raw.get("name"), 180)
     category = _as_text(raw.get("category"), 100)
@@ -303,6 +329,9 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
     for item in retailers[:8]:
         if isinstance(item, dict):
             proposed.append((_as_text(item.get("label"), 40), _as_text(item.get("url"), 700), "marketplace"))
+    if len(proposed) < 4:
+        proposed.extend(await _discover_marketplace_urls(client, name))
+    proposed = list(dict.fromkeys(proposed))[:12]
     verified = await asyncio.gather(*[_verify_url(client, name, url) for _, url, _ in proposed])
     links = []
     for (label, _, kind), url in zip(proposed, verified):
