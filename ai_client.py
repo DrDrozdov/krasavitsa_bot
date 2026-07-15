@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -9,6 +10,7 @@ import httpx
 from dotenv import load_dotenv
 
 from prompts import reviewer_prompt, specialist_prompt, triage_prompt
+from curated_catalog import curated_fallback
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -21,6 +23,10 @@ DEFAULT_ALLOWED_HOSTS = {
     "goldapple.ru", "letu.ru", "rivegauche.ru", "ozon.ru",
     "wildberries.ru", "market.yandex.ru",
 }
+
+_SHARED_ENGINE_RETRY_AT = 0.0
+_LOCAL_ENGINE_RETRY_AT = 0.0
+ENGINE_CIRCUIT_SECONDS = 180.0
 
 
 class BeautyServiceBusyError(ValueError):
@@ -142,8 +148,8 @@ async def _call_model(system: str, user: str, max_tokens: int) -> dict:
 
 
 def _shared_endpoint() -> str:
-    value = os.getenv("BEAUTY_OS_API_URL", "").strip().rstrip("/")
-    if not value:
+    value = os.getenv("BEAUTY_OS_API_URL", "https://krasavitsa-ai.ru/api/recommendations").strip().rstrip("/")
+    if not value or value.lower() in {"off", "disabled", "none"}:
         return ""
     return value if value.endswith("/api/recommendations") else f"{value}/api/recommendations"
 
@@ -153,7 +159,12 @@ async def _call_shared_engine(user_text: str, mode: str) -> dict:
     if not endpoint:
         raise ValueError("SHARED_ENGINE_NOT_CONFIGURED")
     try:
-        async with httpx.AsyncClient(timeout=65, follow_redirects=True) as client:
+        try:
+            timeout = float(os.getenv("BEAUTY_OS_TIMEOUT_SECONDS", "12"))
+        except ValueError:
+            timeout = 12.0
+        timeout = max(5.0, min(45.0, timeout))
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             for attempt in range(2):
                 response = await client.post(endpoint, json={"query": user_text, "mode": mode})
                 if response.status_code != 429:
@@ -335,11 +346,37 @@ async def _local_pipeline(user_text: str, mode: str) -> dict:
 
 
 async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
+    global _SHARED_ENGINE_RETRY_AT, _LOCAL_ENGINE_RETRY_AT
     mode = mode if mode in MODES else "skin"
-    if _shared_endpoint():
+    now = time.monotonic()
+    if _shared_endpoint() and now >= _SHARED_ENGINE_RETRY_AT:
         try:
-            return await _call_shared_engine(user_text, mode)
+            shared = await _call_shared_engine(user_text, mode)
+            if shared.get("status") == "complete" and shared.get("products"):
+                return shared
+            if shared.get("status") == "safety_redirect":
+                return shared
+            if shared.get("status") == "needs_input":
+                return curated_fallback(
+                    mode,
+                    "Запрос можно уточнить, но для начала показываю несколько проверенных направлений. "
+                    "Выберите близкий вариант или измените параметры профиля.",
+                )
         except ValueError:
-            if not _get_deepseek_config()[0]:
-                raise
-    return await _local_pipeline(user_text, mode)
+            _SHARED_ENGINE_RETRY_AT = time.monotonic() + ENGINE_CIRCUIT_SECONDS
+    if now >= _LOCAL_ENGINE_RETRY_AT:
+        try:
+            local = await _local_pipeline(user_text, mode)
+            if local.get("status") == "complete" and local.get("products"):
+                return local
+            if local.get("status") == "safety_redirect":
+                return local
+            if local.get("status") == "needs_input":
+                return curated_fallback(
+                    mode,
+                    "Запрос можно уточнить, но для начала показываю несколько проверенных направлений. "
+                    "Выберите близкий вариант или измените параметры профиля.",
+                )
+        except ValueError:
+            _LOCAL_ENGINE_RETRY_AT = time.monotonic() + ENGINE_CIRCUIT_SECONDS
+    return curated_fallback(mode)

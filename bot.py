@@ -46,6 +46,7 @@ from beauty_flow import (
     previous_step,
     result_inline_keyboard,
     safe_edit,
+    saved_answers_context,
     saved_profile_keyboard,
     saved_profile_text,
     serialize_answers,
@@ -134,15 +135,17 @@ main_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="🌸 Парфюм"),
         ],
         [
-            KeyboardButton(text="💰 Бюджет"),
-            KeyboardButton(text="📜 Мои подборы"),
+            KeyboardButton(text="✨ Новый подбор"),
+            KeyboardButton(text="👤 Мой профиль"),
         ],
         [
+            KeyboardButton(text="📜 Мои подборы"),
             KeyboardButton(text="📂 Избранное"),
-            KeyboardButton(text="ℹ️ Помощь"),
         ],
     ],
-    resize_keyboard=True
+    resize_keyboard=True,
+    is_persistent=True,
+    input_field_placeholder="Опишите, что хотите подобрать…",
 )
 
 scenarios_menu = ReplyKeyboardMarkup(
@@ -220,6 +223,31 @@ perfume_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+
+def has_saved_beauty_profile(user_id: int) -> bool:
+    return any(
+        bool((get_beauty_profile(user_id, mode) or {}).get("answers"))
+        for mode in MODE_LABELS
+    )
+
+
+def welcome_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    if has_saved_beauty_profile(user_id):
+        return (
+            "<b>С возвращением</b>\n\nМожно использовать сохранённые параметры или начать новый подбор.",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Использовать мой профиль", callback_data="onboarding:use")],
+                [InlineKeyboardButton(text="Новый подбор", callback_data="onboarding:skip")],
+            ]),
+        )
+    return (
+        "<b>Сделать подбор точнее?</b>\n\nМожно один раз создать beauty-профиль — выбранные параметры сохранятся. Это необязательно.",
+        InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Создать профиль", callback_data="onboarding:create")],
+            [InlineKeyboardButton(text="Продолжить без профиля", callback_data="onboarding:skip")],
+        ]),
+    )
+
 @dp.message(CommandStart())
 async def start(message: Message):
     save_user(
@@ -227,7 +255,14 @@ async def start(message: Message):
         username=message.from_user.username
     )
     welcome_photo = FSInputFile(WELCOME_ASSET_PATH) if WELCOME_ASSET_PATH.is_file() else None
-    await animate_intro(message, welcome_photo=welcome_photo)
+    panel_text, panel_keyboard = welcome_panel(message.from_user.id)
+    await animate_intro(
+        message,
+        welcome_photo=welcome_photo,
+        reply_keyboard=main_menu,
+        panel_text=panel_text,
+        panel_keyboard=panel_keyboard,
+    )
 
 
 @dp.message(Command("help"))
@@ -311,6 +346,7 @@ def profile_modes_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("pick"))
 async def pick_command(message: Message):
     save_user(user_id=message.from_user.id, username=message.from_user.username)
+    await message.answer("Фирменное меню закреплено под строкой ввода.", reply_markup=main_menu)
     await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
 
 
@@ -336,6 +372,55 @@ async def profile_command(message: Message):
         parse_mode="HTML",
         reply_markup=profile_modes_keyboard(),
     )
+
+
+@dp.message(F.text == "👤 Мой профиль")
+async def profile_keyboard_button(message: Message):
+    await profile_command(message)
+
+
+@dp.message(F.text == "✨ Новый подбор")
+async def new_selection_keyboard_button(message: Message):
+    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+    await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
+
+
+@dp.callback_query(F.data == "onboarding:create")
+async def callback_onboarding_create(callback: CallbackQuery):
+    await callback.answer()
+    if not callback.message:
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Кожа", callback_data="guide:skin"),
+            InlineKeyboardButton(text="Волосы", callback_data="guide:hair"),
+            InlineKeyboardButton(text="Парфюм", callback_data="guide:perfume"),
+        ],
+        [InlineKeyboardButton(text="Продолжить без профиля", callback_data="onboarding:skip")],
+    ])
+    await render_panel(
+        callback.message,
+        "<b>Создание beauty-профиля</b>\n\nВыберите направление. Каждый ответ сохранится автоматически, а профиль всегда можно изменить.",
+        keyboard,
+    )
+
+
+@dp.callback_query(F.data == "onboarding:use")
+async def callback_onboarding_use(callback: CallbackQuery):
+    await callback.answer()
+    if callback.message:
+        await render_panel(
+            callback.message,
+            "<b>Мои параметры</b>\n\nВыберите сохранённое направление.",
+            profile_modes_keyboard(),
+        )
+
+
+@dp.callback_query(F.data == "onboarding:skip")
+async def callback_onboarding_skip(callback: CallbackQuery):
+    await callback.answer("Профиль можно создать позже")
+    if callback.message:
+        await render_panel(callback.message, main_text(), main_inline_keyboard())
 
 
 @dp.callback_query(F.data == "menu:main")
@@ -1091,6 +1176,13 @@ async def perform_search(
             profile_notes.append(f"Сохранённый бюджет на один товар: {saved_profile['budget']}")
         if mode == "skin" and saved_profile.get("skin_type"):
             profile_notes.append(f"Сохранённый тип кожи: {saved_profile['skin_type']}")
+        beauty_profile = get_beauty_profile(requester_id, mode) or {}
+        beauty_context = saved_answers_context(mode, beauty_profile.get("answers", {}))
+        if beauty_context:
+            profile_notes.append(
+                "Сохранённый beauty-профиль: " + beauty_context
+                + ". Если текущий запрос отличается, приоритет у текущего запроса."
+            )
         ai_request = text_to_process
         if profile_notes:
             ai_request += "\n\nКонтекст профиля, который тоже нужно учесть:\n" + "\n".join(profile_notes)
@@ -2072,12 +2164,12 @@ async def main():
     await bot.set_my_description(
         description=(
             "Красавица — персональный beauty-помощник. Подбираю уход за кожей и волосами, "
-            "а также парфюм. Можно ответить на короткие вопросы или сразу написать запрос."
+            "а также парфюм. Профиль можно сохранить, использовать повторно или пропустить."
         ),
         language_code="ru",
     )
     await bot.set_my_short_description(
-        short_description="AI-подбор ухода за кожей, волосами и парфюма",
+        short_description="Кожа · волосы · парфюм — подбор с сохранённым профилем",
         language_code="ru",
     )
     await bot.set_my_commands([

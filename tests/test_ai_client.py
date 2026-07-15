@@ -41,3 +41,43 @@ def test_short_indecision_is_treated_as_exploratory_request():
     assert ai_client._is_exploratory_request("Не знаю")
     assert ai_client._is_exploratory_request("Покажи варианты")
     assert not ai_client._is_exploratory_request("Нужен древесный аромат до 10 000 ₽")
+
+
+def test_shared_engine_defaults_to_production_site(monkeypatch):
+    monkeypatch.delenv("BEAUTY_OS_API_URL", raising=False)
+    assert ai_client._shared_endpoint() == "https://krasavitsa-ai.ru/api/recommendations"
+
+
+def test_curated_catalog_is_final_fallback(monkeypatch):
+    shared = AsyncMock(side_effect=ValueError("offline"))
+    local = AsyncMock(side_effect=ValueError("no balance"))
+    monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
+    monkeypatch.setattr(ai_client, "_LOCAL_ENGINE_RETRY_AT", 0.0)
+    monkeypatch.setattr(ai_client, "_call_shared_engine", shared)
+    monkeypatch.setattr(ai_client, "_local_pipeline", local)
+
+    result = asyncio.run(ai_client.ask_deepseek("Подбери уход за волосами", "hair"))
+    second = asyncio.run(ai_client.ask_deepseek("Подбери уход за волосами", "hair"))
+
+    assert result["status"] == "complete"
+    assert second["status"] == "complete"
+    assert result["methodology"] == "curated-fallback"
+    assert len(result["products"]) >= 3
+    assert all(product["marketplaces"][0]["href"].startswith("https://") for product in result["products"])
+    assert shared.await_count == 1
+    assert local.await_count == 1
+
+
+def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
+    monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
+    monkeypatch.setattr(
+        ai_client,
+        "_call_shared_engine",
+        AsyncMock(return_value={"status": "needs_input", "products": [], "summary": "Уточните запрос"}),
+    )
+
+    result = asyncio.run(ai_client.ask_deepseek("Нужна термозащита", "hair"))
+
+    assert result["status"] == "complete"
+    assert result["methodology"] == "curated-fallback"
+    assert len(result["products"]) >= 3

@@ -65,3 +65,29 @@ def test_command_fallback_never_sends_unknown_command_to_ai():
 
     message.answer.assert_awaited_once()
     assert "Красавица" in message.answer.await_args.args[0]
+
+
+def test_main_reply_keyboard_is_persistent_and_contains_profile():
+    assert bot.main_menu.is_persistent is True
+    labels = [button.text for row in bot.main_menu.keyboard for button in row]
+    assert {"💧 Кожа", "💇‍♀️ Волосы", "🌸 Парфюм", "👤 Мой профиль"} <= set(labels)
+
+
+def test_new_user_can_create_or_skip_profile(monkeypatch):
+    monkeypatch.setattr(bot, "get_beauty_profile", lambda *_args: None)
+    text, keyboard = bot.welcome_panel(77)
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "создать" in text.lower()
+    assert {"onboarding:create", "onboarding:skip"} <= set(callbacks)
+
+
+def test_returning_user_can_use_saved_profile(monkeypatch):
+    monkeypatch.setattr(
+        bot,
+        "get_beauty_profile",
+        lambda _user_id, mode: {"answers": {"goal": "dry"}} if mode == "skin" else None,
+    )
+    text, keyboard = bot.welcome_panel(77)
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert "С возвращением" in text
+    assert "onboarding:use" in callbacks

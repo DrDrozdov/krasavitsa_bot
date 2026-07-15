@@ -7,7 +7,6 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
-    ReplyKeyboardRemove,
 )
 
 
@@ -313,6 +312,16 @@ def serialize_answers(session: FlowSession) -> dict[str, str]:
     return {key: option.value for key, option in session.answers.items()}
 
 
+def saved_answers_context(mode: str, values: dict[str, str]) -> str:
+    answers = deserialize_answers(mode, values)
+    labels = []
+    for step in FLOW_STEPS[mode]:
+        option = answers.get(step.key)
+        if option:
+            labels.append(f"{step.title}: {option.label}")
+    return "; ".join(labels)
+
+
 def get_session(user_id: int, mode: str | None = None) -> FlowSession | None:
     session = SESSIONS.get(user_id)
     if session and (mode is None or session.mode == mode):
@@ -451,53 +460,55 @@ async def safe_edit(
         return False
 
 
-async def animate_intro(message: Message, welcome_photo=None) -> Message:
-    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    card = await message.answer("К", reply_markup=ReplyKeyboardRemove())
-    for frame in ("Краса", "Красавица"):
-        await asyncio.sleep(0.55)
-        if not await safe_edit(card, frame, max_retry_wait=1.0):
-            break
-    await asyncio.sleep(0.45)
+async def animate_intro(
+    message: Message,
+    welcome_photo=None,
+    reply_keyboard=None,
+    panel_text: str | None = None,
+    panel_keyboard: InlineKeyboardMarkup | None = None,
+) -> Message:
+    welcome_caption = (
+        "✦ <b>Красавица</b>\n"
+        "Персональный подбор ухода за кожей, волосами и парфюмерии."
+    )
+    welcome_card = None
     if welcome_photo is not None:
         await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
         try:
-            final_card = await message.answer_photo(
+            welcome_card = await message.answer_photo(
                 photo=welcome_photo,
-                caption=main_text(),
+                caption=welcome_caption,
                 parse_mode="HTML",
-                reply_markup=main_inline_keyboard(),
+                reply_markup=reply_keyboard,
             )
         except TelegramRetryAfter as error:
             if float(error.retry_after) <= 3.0:
                 await asyncio.sleep(float(error.retry_after) + 0.1)
                 try:
-                    final_card = await message.answer_photo(
+                    welcome_card = await message.answer_photo(
                         photo=welcome_photo,
-                        caption=main_text(),
+                        caption=welcome_caption,
                         parse_mode="HTML",
-                        reply_markup=main_inline_keyboard(),
+                        reply_markup=reply_keyboard,
                     )
                 except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
-                    final_card = None
-            else:
-                final_card = None
+                    pass
         except (TelegramBadRequest, TelegramNetworkError):
-            final_card = None
-        if final_card is not None:
-            try:
-                await card.delete()
-            except (TelegramBadRequest, TelegramNetworkError):
-                pass
-            return final_card
-    if await safe_edit(card, main_text(), main_inline_keyboard(), max_retry_wait=2.0):
-        return card
-    final_card = await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
-    try:
-        await card.delete()
-    except (TelegramBadRequest, TelegramNetworkError):
-        pass
-    return final_card
+            pass
+    if welcome_card is None:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+        welcome_card = await message.answer(
+            welcome_caption,
+            parse_mode="HTML",
+            reply_markup=reply_keyboard,
+        )
+
+    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+    return await message.answer(
+        panel_text or main_text(),
+        parse_mode="HTML",
+        reply_markup=panel_keyboard or main_inline_keyboard(),
+    )
 
 
 SEARCH_PHASES = {

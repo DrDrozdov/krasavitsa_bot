@@ -56,6 +56,7 @@ def test_pick_command_is_routed_to_menu_without_ai(monkeypatch):
     asyncio.run(bot_module.dp.feed_update(test_bot, update))
 
     sent_messages = [method for method in session.methods if isinstance(method, SendMessage)]
-    assert len(sent_messages) == 1
-    assert "Что подбираем?" in sent_messages[0].text
-    assert sent_messages[0].reply_markup.inline_keyboard[0][0].callback_data == "mode:skin"
+    assert len(sent_messages) == 2
+    assert sent_messages[0].reply_markup.is_persistent is True
+    assert "Что подбираем?" in sent_messages[1].text
+    assert sent_messages[1].reply_markup.inline_keyboard[0][0].callback_data == "mode:skin"
