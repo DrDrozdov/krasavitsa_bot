@@ -144,3 +144,8 @@ def test_every_mode_has_a_branded_fallback_image():
         result = bot.load_mode_fallback_image(mode, "Test Product")
         assert result is not None
         assert result.filename == "Test_Product.jpg"
+
+
+def test_welcome_image_is_packaged_with_bot():
+    assert bot.WELCOME_ASSET_PATH.is_file()
+    assert bot.WELCOME_ASSET_PATH.stat().st_size > 100_000

@@ -85,3 +85,28 @@ def test_intro_always_sends_final_menu_when_edit_fails(monkeypatch):
     assert message.answer.await_count == 2
     assert "Красавица" in message.answer.await_args_list[-1].args[0]
     temporary_card.delete.assert_awaited_once()
+
+
+def test_intro_transitions_into_photo_card(monkeypatch):
+    temporary_card = SimpleNamespace(delete=AsyncMock())
+    final_photo_card = SimpleNamespace()
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=1),
+        bot=SimpleNamespace(send_chat_action=AsyncMock()),
+        answer=AsyncMock(return_value=temporary_card),
+        answer_photo=AsyncMock(return_value=final_photo_card),
+    )
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(beauty_flow.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(beauty_flow, "safe_edit", AsyncMock(return_value=True))
+
+    result = asyncio.run(beauty_flow.animate_intro(message, welcome_photo="welcome.png"))
+
+    assert result is final_photo_card
+    message.answer_photo.assert_awaited_once()
+    assert "Красавица" in message.answer_photo.await_args.kwargs["caption"]
+    assert message.answer_photo.await_args.kwargs["reply_markup"].inline_keyboard
+    temporary_card.delete.assert_awaited_once()

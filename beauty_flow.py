@@ -451,7 +451,7 @@ async def safe_edit(
         return False
 
 
-async def animate_intro(message: Message) -> Message:
+async def animate_intro(message: Message, welcome_photo=None) -> Message:
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
     card = await message.answer("К", reply_markup=ReplyKeyboardRemove())
     for frame in ("Краса", "Красавица"):
@@ -459,6 +459,37 @@ async def animate_intro(message: Message) -> Message:
         if not await safe_edit(card, frame, max_retry_wait=1.0):
             break
     await asyncio.sleep(0.45)
+    if welcome_photo is not None:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
+        try:
+            final_card = await message.answer_photo(
+                photo=welcome_photo,
+                caption=main_text(),
+                parse_mode="HTML",
+                reply_markup=main_inline_keyboard(),
+            )
+        except TelegramRetryAfter as error:
+            if float(error.retry_after) <= 3.0:
+                await asyncio.sleep(float(error.retry_after) + 0.1)
+                try:
+                    final_card = await message.answer_photo(
+                        photo=welcome_photo,
+                        caption=main_text(),
+                        parse_mode="HTML",
+                        reply_markup=main_inline_keyboard(),
+                    )
+                except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
+                    final_card = None
+            else:
+                final_card = None
+        except (TelegramBadRequest, TelegramNetworkError):
+            final_card = None
+        if final_card is not None:
+            try:
+                await card.delete()
+            except (TelegramBadRequest, TelegramNetworkError):
+                pass
+            return final_card
     if await safe_edit(card, main_text(), main_inline_keyboard(), max_retry_wait=2.0):
         return card
     final_card = await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())

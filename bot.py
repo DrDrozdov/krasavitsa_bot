@@ -19,6 +19,7 @@ from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
+    FSInputFile,
     Message,
     CallbackQuery,
     BufferedInputFile,
@@ -105,6 +106,7 @@ MODE_ASSET_PATHS = {
     "hair": BASE_DIR / "assets" / "hair-packshot-v2.webp",
     "perfume": BASE_DIR / "assets" / "perfume-packshot-v2.webp",
 }
+WELCOME_ASSET_PATH = BASE_DIR / "assets" / "welcome-v1.png"
 
 IMAGE_FETCH_TIMEOUT = 4
 IMAGE_SEARCH_TIMEOUT = 4
@@ -224,7 +226,8 @@ async def start(message: Message):
         user_id=message.from_user.id,
         username=message.from_user.username
     )
-    await animate_intro(message)
+    welcome_photo = FSInputFile(WELCOME_ASSET_PATH) if WELCOME_ASSET_PATH.is_file() else None
+    await animate_intro(message, welcome_photo=welcome_photo)
 
 
 @dp.message(Command("help"))
@@ -2066,6 +2069,17 @@ async def admin_stats(message: Message):
 
 async def main():
     init_db()
+    await bot.set_my_description(
+        description=(
+            "Красавица — персональный beauty-помощник. Подбираю уход за кожей и волосами, "
+            "а также парфюм. Можно ответить на короткие вопросы или сразу написать запрос."
+        ),
+        language_code="ru",
+    )
+    await bot.set_my_short_description(
+        short_description="AI-подбор ухода за кожей, волосами и парфюма",
+        language_code="ru",
+    )
     await bot.set_my_commands([
         BotCommand(command="start", description="Открыть Красавицу"),
         BotCommand(command="pick", description="Начать новый подбор"),
