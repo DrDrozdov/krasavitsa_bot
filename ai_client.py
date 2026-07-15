@@ -160,10 +160,10 @@ async def _call_shared_engine(user_text: str, mode: str) -> dict:
         raise ValueError("SHARED_ENGINE_NOT_CONFIGURED")
     try:
         try:
-            timeout = float(os.getenv("BEAUTY_OS_TIMEOUT_SECONDS", "12"))
+            timeout = float(os.getenv("BEAUTY_OS_TIMEOUT_SECONDS", "40"))
         except ValueError:
-            timeout = 12.0
-        timeout = max(5.0, min(45.0, timeout))
+            timeout = 40.0
+        timeout = max(5.0, min(60.0, timeout))
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             for attempt in range(2):
                 response = await client.post(endpoint, json={"query": user_text, "mode": mode})
