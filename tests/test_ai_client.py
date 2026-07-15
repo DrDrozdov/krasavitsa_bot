@@ -48,7 +48,7 @@ def test_shared_engine_defaults_to_production_site(monkeypatch):
     assert ai_client._shared_endpoint() == "https://krasavitsa-ai.ru/api/recommendations"
 
 
-def test_curated_catalog_is_final_fallback(monkeypatch):
+def test_shared_engine_outage_never_invents_unpriced_fallback(monkeypatch):
     shared = AsyncMock(side_effect=ValueError("offline"))
     local = AsyncMock(side_effect=ValueError("no balance"))
     monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
@@ -59,21 +59,14 @@ def test_curated_catalog_is_final_fallback(monkeypatch):
     result = asyncio.run(ai_client.ask_deepseek("Подбери уход за волосами", "hair"))
     second = asyncio.run(ai_client.ask_deepseek("Подбери уход за волосами", "hair"))
 
-    assert result["status"] == "complete"
-    assert second["status"] == "complete"
-    assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 3
-    assert all(product["priceRange"] for product in result["products"])
-    assert all(
-        link["href"].startswith("https://")
-        for product in result["products"]
-        for link in product["marketplaces"]
-    )
+    assert result["status"] == "no_verified_products"
+    assert second["status"] == "no_verified_products"
+    assert result["products"] == []
     assert shared.await_count == 1
-    assert local.await_count == 1
+    local.assert_not_awaited()
 
 
-def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
+def test_needs_input_is_preserved_by_the_shared_engine(monkeypatch):
     monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
     monkeypatch.setattr(
         ai_client,
@@ -83,12 +76,10 @@ def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
 
     result = asyncio.run(ai_client.ask_deepseek("Нужна термозащита", "hair"))
 
-    assert result["status"] == "complete"
-    assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 3
+    assert result["status"] == "needs_input"
 
 
-def test_shared_curated_fallback_does_not_mask_working_local_ai(monkeypatch):
+def test_incomplete_shared_result_is_rejected_without_local_algorithm(monkeypatch):
     monkeypatch.setattr(ai_client, "_SHARED_ENGINE_RETRY_AT", 0.0)
     monkeypatch.setattr(ai_client, "_LOCAL_ENGINE_RETRY_AT", 0.0)
     monkeypatch.setattr(
@@ -100,17 +91,11 @@ def test_shared_curated_fallback_does_not_mask_working_local_ai(monkeypatch):
             "methodology": "curated-fallback",
         }),
     )
-    local_result = {
-        "status": "complete",
-        "products": [{"name": "Personal result"}],
-        "methodology": "grounded-v3",
-    }
-    local = AsyncMock(return_value=local_result)
+    local = AsyncMock()
     monkeypatch.setattr(ai_client, "_local_pipeline", local)
 
     result = asyncio.run(ai_client.ask_deepseek("Нужен аромат", "perfume"))
 
-    assert result["methodology"] == "grounded-v3"
-    assert result["products"][0]["name"] == "Personal result"
-    assert len(result["products"]) >= 3
-    local.assert_awaited_once()
+    assert result["status"] == "no_verified_products"
+    assert result["products"] == []
+    local.assert_not_awaited()

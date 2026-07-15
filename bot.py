@@ -1142,6 +1142,11 @@ NON_COSMETIC_PATTERNS = [
     re.compile(r"\bчто\s+посмотреть\b", re.IGNORECASE),
 ]
 
+OFF_TOPIC_STEMS = (
+    "автомоб", "акци", "билет", "биткоин", "блюд", "валют", "видеоигр", "врачебн", "домашн", "закон", "игр", "инвест", "код", "крипт", "курс", "математ", "недвиж", "новост", "погод", "полит", "программ", "путеше", "рецепт", "спорт", "фильм", "футбол", "школ", "экзамен",
+)
+MODE_INTENT_STEMS = ("вариант", "вечер", "ежеднев", "не знаю", "нужен", "подар", "подбер", "посовет", "свеж", "сладк", "хочу", "цена", "цен", "бюджет")
+
 
 def normalize_user_request_text(text: str) -> str:
     text = str(text or "").lower().replace("ё", "е")
@@ -1149,7 +1154,7 @@ def normalize_user_request_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def is_cosmetic_request(text: str) -> bool:
+def is_cosmetic_request(text: str, mode: str | None = None) -> bool:
     normalized = normalize_user_request_text(text)
     if not normalized:
         return False
@@ -1160,7 +1165,31 @@ def is_cosmetic_request(text: str) -> bool:
     if any(pattern.search(normalized) for pattern in NON_COSMETIC_PATTERNS):
         return False
 
-    return any(keyword in normalized for keyword in COSMETIC_REQUEST_KEYWORDS)
+    if any(stem in normalized for stem in OFF_TOPIC_STEMS):
+        return False
+
+    if re.search(r"(?:игнорируй|системн(?:ый|ые)? промпт|инструкц(?:ия|ии)|developer message|jailbreak)", normalized, flags=re.IGNORECASE):
+        return False
+
+    if any(keyword in normalized for keyword in COSMETIC_REQUEST_KEYWORDS):
+        return True
+    words = [word for word in normalized.split() if len(word) >= 2]
+    return bool(mode) and len(words) >= 2 and any(stem in normalized for stem in MODE_INTENT_STEMS)
+
+
+async def passes_shared_relevance_gate(text: str, mode: str) -> bool:
+    """The canonical deterministic gate lives beside the shared website engine."""
+    try:
+        async with httpx.AsyncClient(timeout=3, follow_redirects=True) as client:
+            response = await client.post(
+                urljoin(WEBSITE_URL, "/api/beauty-relevance"),
+                json={"query": text, "mode": mode},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        return bool(payload.get("relevant")) if isinstance(payload, dict) else False
+    except (httpx.HTTPError, ValueError):
+        return is_cosmetic_request(text, mode)
 
 
 def is_thanks_message(text: str) -> bool:
@@ -1384,14 +1413,14 @@ async def handle_voice(message: Message):
         transcript = _as_bot_text(payload.get("text") if isinstance(payload, dict) else "")
         if not transcript:
             raise ValueError("EMPTY_TRANSCRIPT")
-        if not is_cosmetic_request(transcript):
+        mode = detect_mode(transcript) or ACTIVE_MODES.get(message.from_user.id, "skin")
+        if not await passes_shared_relevance_gate(transcript, mode):
             await render_panel(
                 status,
                 "🎙️ <b>Я услышала:</b>\n" + html_text(transcript) + "\n\n" + html_text(build_offtopic_reply()),
                 main_inline_keyboard(),
             )
             return
-        mode = detect_mode(transcript) or ACTIVE_MODES.get(message.from_user.id, "skin")
         await safe_edit(
             status,
             f"🎙️ <b>Я услышала:</b> {html_text(transcript)}\n\nНачинаю подбор.",
@@ -1423,10 +1452,6 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
     if user_text is None and is_thanks_message(text_to_process):
         await message.answer(build_thanks_reply(), reply_markup=main_inline_keyboard())
         return
-    if user_text is None and user_id not in ACTIVE_MODES and not is_cosmetic_request(text_to_process):
-        await message.answer(build_offtopic_reply(), reply_markup=main_inline_keyboard())
-        return
-
     saved_state = get_user_beauty_state(user_id) or {}
     mode = (
         detect_mode(text_to_process)
@@ -1434,6 +1459,9 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         or saved_state.get("active_mode")
         or "skin"
     )
+    if not await passes_shared_relevance_gate(text_to_process, mode):
+        await message.answer(build_offtopic_reply(), reply_markup=main_inline_keyboard())
+        return
     await perform_search(
         message=message,
         requester_id=user_id,

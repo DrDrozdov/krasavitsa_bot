@@ -29,6 +29,14 @@ def test_full_cosmetic_request_is_allowed():
     )
 
 
+def test_offtopic_request_is_rejected_even_after_mode_is_selected():
+    assert not bot.is_cosmetic_request("Хочу купить автомобиль до миллиона", mode="skin")
+
+
+def test_mode_scoped_gift_request_is_allowed_without_an_extra_keyword():
+    assert bot.is_cosmetic_request("Хочу подарок на вечер", mode="perfume")
+
+
 def test_offtopic_reply_is_friendly_and_has_smile():
     reply = bot.build_offtopic_reply()
 

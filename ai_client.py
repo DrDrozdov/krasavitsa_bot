@@ -10,7 +10,6 @@ import httpx
 from dotenv import load_dotenv
 
 from prompts import reviewer_prompt, specialist_prompt, triage_prompt
-from curated_catalog import curated_fallback
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -80,41 +79,55 @@ def _score(value) -> int:
         return 60
 
 
-def _estimated_price_range(mode: str, category: str) -> str:
-    value = str(category or "").lower()
-    if mode == "perfume":
-        return "3 000–12 000 ₽" if "набор" in value or "мини" in value else "7 000–28 000 ₽"
-    if mode == "hair":
-        return "800–3 500 ₽" if "шамп" in value else "1 200–5 500 ₽"
-    return "1 200–3 500 ₽" if "spf" in value or "солнц" in value else "900–4 500 ₽"
+def _store_key(url: str) -> str:
+    host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
+    for marker, key in (
+        ("goldapple", "goldapple"), ("letu", "letu"), ("rivegauche", "rivegauche"),
+        ("wildberries", "wildberries"), ("market.yandex", "yandex"), ("ozon", "ozon"), ("tsum", "tsum"),
+    ):
+        if marker in host:
+            return key
+    return ""
 
 
 def _ensure_complete_result(data: dict, mode: str, minimum: int = 3) -> dict:
     if data.get("status") != "complete":
         return data
-    fallback = curated_fallback(mode)
     products = data.get("products") if isinstance(data.get("products"), list) else []
-    combined = [item for item in products if isinstance(item, dict)] + fallback["products"]
     result = []
     seen = set()
-    for raw in combined:
+    for raw in products:
         product = dict(raw)
         name = _as_text(product.get("name"), 180)
         key = re.sub(r"\s+", " ", name.lower()).strip()
         if not key or key in seen:
             continue
         seen.add(key)
-        product["priceRange"] = _as_text(product.get("priceRange"), 80) or _estimated_price_range(
-            mode, _as_text(product.get("category"), 100)
-        )
         links = product.get("marketplaces") if isinstance(product.get("marketplaces"), list) else []
-        product["marketplaces"] = links[:8]
+        verified_links = [
+            item for item in links
+            if isinstance(item, dict) and isinstance(item.get("price"), (int, float)) and _store_key(_as_text(item.get("href"), 700))
+        ][:8]
+        if len({_store_key(item["href"]) for item in verified_links}) < 3:
+            continue
+        if not _as_text(product.get("priceRange"), 80):
+            prices = [int(item["price"]) for item in verified_links]
+            product["priceRange"] = f"{min(prices):,}–{max(prices):,} ₽".replace(",", " ")
+        product["marketplaces"] = verified_links
         result.append(product)
         if len(result) >= max(minimum, 4):
             break
     output = dict(data)
+    if len(result) < minimum:
+        return {
+            "status": "no_verified_products",
+            "mode": mode,
+            "summary": "Не удалось подтвердить минимум три товара с ценами на трёх разных маркетплейсах. Поэтому не показываю случайные ссылки или оценочные цены.",
+            "followUpQuestion": "Уточни бюджет, объём или 1–2 желаемых бренда — я повторю поиск.",
+            "products": [],
+            "methodology": "grounded-v3",
+        }
     output["products"] = result
-    output["insight"] = _as_text(data.get("insight"), 500) or fallback["insight"]
     return output
 
 
@@ -253,7 +266,7 @@ def _tokens(name: str) -> list[str]:
     return list(dict.fromkeys(token for token in normalized.split() if len(token) >= 3 and token not in stop))[:8]
 
 
-async def _verify_url(client: httpx.AsyncClient, product_name: str, value: str) -> str:
+async def _verify_url(client: httpx.AsyncClient, product_name: str, value: str) -> dict | str:
     url = _direct_url(value)
     if not url:
         return ""
@@ -266,7 +279,7 @@ async def _verify_url(client: httpx.AsyncClient, product_name: str, value: str) 
             if not final_url:
                 return ""
             if response.status_code in {403, 429}:
-                return final_url if path_matches >= 2 else ""
+                return ""
             if response.status_code >= 400 or "text/html" not in response.headers.get("content-type", ""):
                 return ""
             content = bytearray()
@@ -274,12 +287,34 @@ async def _verify_url(client: httpx.AsyncClient, product_name: str, value: str) 
                 content.extend(chunk)
                 if len(content) >= 180_000:
                     break
-        page = content.decode("utf-8", errors="ignore").lower()
+        raw_page = content.decode("utf-8", errors="ignore")
+        page = raw_page.lower()
         matches = sum(token in page for token in product_tokens)
         required = min(3, max(2, (len(product_tokens) + 1) // 2))
-        return final_url if matches >= required else ""
+        if matches < required:
+            return ""
+        price = _extract_ruble_price(raw_page)
+        return {"href": final_url, "price": price} if price is not None else ""
     except httpx.RequestError:
-        return url if path_matches >= 3 else ""
+        return ""
+
+
+def _extract_ruble_price(html: str) -> int | None:
+    values = []
+    for pattern in (
+        r'"(?:price|priceValue|currentPrice|salePrice|discountPrice|finalPrice)"\s*:\s*"?(\d{2,7}(?:[.,]\d{1,2})?)"?',
+        r'(?:product:price:amount|priceAmount)[^>]{0,160}(?:content=|:)\s*["\']?(\d{2,7}(?:[.,]\d{1,2})?)',
+    ):
+        for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+            try:
+                value = round(float(match.group(1).replace(",", ".")))
+            except ValueError:
+                continue
+            if 100 <= value <= 2_000_000:
+                values.append(value)
+    if not values:
+        return None
+    return max(set(values), key=lambda value: (values.count(value), -value))
 
 
 def _link_label(url: str, fallback: str) -> str:
@@ -293,29 +328,27 @@ def _link_label(url: str, fallback: str) -> str:
 
 
 async def _discover_marketplace_urls(client: httpx.AsyncClient, product_name: str) -> list[tuple[str, str, str]]:
-    sites = " OR ".join(f"site:{host}" for host in sorted(DEFAULT_ALLOWED_HOSTS))
-    query = quote_plus(f'"{product_name}" ({sites})')
-    try:
-        response = await client.get(
-            f"https://html.duckduckgo.com/html/?q={query}",
-            headers={"User-Agent": "Mozilla/5.0 (compatible; KrasavitsaProductDiscovery/3.0)"},
-        )
-        if response.status_code >= 400:
-            return []
-    except httpx.RequestError:
-        return []
-    result = []
-    for match in re.finditer(r"uddg=([^&\"']+)", response.text, flags=re.IGNORECASE):
+    async def find_on_host(host: str) -> tuple[str, str, str] | None:
+        query = quote_plus(f'"{product_name}" site:{host}')
         try:
-            url = _direct_url(unquote(match.group(1)))
-        except ValueError:
-            continue
-        if not url or any(existing[1] == url for existing in result):
-            continue
-        result.append((_link_label(url, "Маркетплейс"), url, "marketplace"))
-        if len(result) >= 12:
-            break
-    return result
+            response = await client.get(
+                f"https://html.duckduckgo.com/html/?q={query}",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; KrasavitsaProductDiscovery/3.1)"},
+            )
+            if response.status_code >= 400:
+                return None
+        except httpx.RequestError:
+            return None
+        for match in re.finditer(r"uddg=([^&\"']+)", response.text, flags=re.IGNORECASE):
+            try:
+                url = _direct_url(unquote(match.group(1)))
+            except ValueError:
+                continue
+            if url and _store_key(url) == _store_key(f"https://{host}"):
+                return (_link_label(url, "Маркетплейс"), url, "marketplace")
+        return None
+    found = await asyncio.gather(*[find_on_host(host) for host in DEFAULT_ALLOWED_HOSTS])
+    return [item for item in found if item]
 
 
 async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
@@ -329,15 +362,14 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
     for item in retailers[:8]:
         if isinstance(item, dict):
             proposed.append((_as_text(item.get("label"), 40), _as_text(item.get("url"), 700), "marketplace"))
-    if len(proposed) < 4:
-        proposed.extend(await _discover_marketplace_urls(client, name))
+    proposed.extend(await _discover_marketplace_urls(client, name))
     proposed = list(dict.fromkeys(proposed))[:12]
     verified = await asyncio.gather(*[_verify_url(client, name, url) for _, url, _ in proposed])
     links = []
-    for (label, _, kind), url in zip(proposed, verified):
-        if url and all(link["href"] != url for link in links):
-            links.append({"label": _link_label(url, label), "href": url, "kind": kind})
-    if not links:
+    for (label, _, kind), verified_link in zip(proposed, verified):
+        if verified_link and all(link["href"] != verified_link["href"] for link in links):
+            links.append({"label": _link_label(verified_link["href"], label), "href": verified_link["href"], "kind": kind, "price": verified_link["price"], "currency": "RUB"})
+    if len({_store_key(link["href"]) for link in links}) < 3:
         return None
     return {
         "name": name,
@@ -413,23 +445,12 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
     if _shared_endpoint() and now >= _SHARED_ENGINE_RETRY_AT:
         try:
             shared = await _call_shared_engine(user_text, mode)
-            if (
-                shared.get("status") == "complete"
-                and shared.get("products")
-                and shared.get("methodology") != "curated-fallback"
-            ):
+            if shared.get("status") == "complete" and shared.get("products"):
                 return _ensure_complete_result(shared, mode)
-            if shared.get("status") == "safety_redirect":
-                return shared
-            if shared.get("status") == "needs_input":
-                return curated_fallback(
-                    mode,
-                    "Запрос можно уточнить, но для начала показываю несколько проверенных направлений. "
-                    "Выберите близкий вариант или измените параметры профиля.",
-                )
+            return shared
         except ValueError:
             _SHARED_ENGINE_RETRY_AT = time.monotonic() + ENGINE_CIRCUIT_SECONDS
-    if now >= _LOCAL_ENGINE_RETRY_AT:
+    if os.getenv("BEAUTY_ALLOW_LOCAL_ENGINE_FALLBACK", "0") == "1" and now >= _LOCAL_ENGINE_RETRY_AT:
         try:
             local = await _local_pipeline(user_text, mode)
             if local.get("status") == "complete" and local.get("products"):
@@ -437,11 +458,14 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
             if local.get("status") == "safety_redirect":
                 return local
             if local.get("status") == "needs_input":
-                return curated_fallback(
-                    mode,
-                    "Запрос можно уточнить, но для начала показываю несколько проверенных направлений. "
-                    "Выберите близкий вариант или измените параметры профиля.",
-                )
+                return local
         except ValueError:
             _LOCAL_ENGINE_RETRY_AT = time.monotonic() + ENGINE_CIRCUIT_SECONDS
-    return _ensure_complete_result(curated_fallback(mode), mode)
+    return {
+        "status": "no_verified_products",
+        "mode": mode,
+        "summary": "Единый движок «Красавицы» временно недоступен. Не показываю резервные товары без трёх подтверждённых ценовых карточек.",
+        "followUpQuestion": "Попробуйте повторить запрос через минуту.",
+        "products": [],
+        "methodology": "grounded-v3",
+    }
