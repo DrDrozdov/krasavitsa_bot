@@ -7,7 +7,7 @@ CURATED_PRODUCTS = {
             "matchScore": 72,
             "usage": "Наносить после очищения; сначала протестировать на небольшом участке.",
             "tradeoffs": ["При выраженной сухости одного крем-геля может быть недостаточно."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://purito.com/product/oat-in-calming-gel-cream/", "kind": "official"}],
+            "marketplaces": [],
         },
         {
             "name": "COSRX Low pH Good Morning Gel Cleanser",
@@ -16,7 +16,7 @@ CURATED_PRODUCTS = {
             "matchScore": 68,
             "usage": "Использовать небольшое количество и уменьшить частоту при стянутости.",
             "tradeoffs": ["Реактивной коже может не подойти отдушка отдельных растительных компонентов."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://www.cosrx.com/products/low-ph-good-morning-gel-cleanser", "kind": "official"}],
+            "marketplaces": [],
         },
         {
             "name": "Beauty of Joseon Relief Sun: Rice + Probiotics SPF50+ PA++++",
@@ -25,7 +25,7 @@ CURATED_PRODUCTS = {
             "matchScore": 70,
             "usage": "Наносить достаточное количество последним шагом утреннего ухода и обновлять по ситуации.",
             "tradeoffs": ["Формулы для разных рынков могут отличаться."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://beautyofjoseon.com/products/relief-sun-rice-probiotics-spf50-pa-uk", "kind": "official"}],
+            "marketplaces": [{"label": "Яндекс Маркет", "href": "https://ngo.integration.market.yandex.ru/card/krem-dlya-litsa-s-probiotikami-solntsezashchitnyy--beauty-of-joseon-relief-sun-riceprobiotics-spf-50-pa-50-ml/103197717356", "kind": "marketplace"}],
         },
     ],
     "hair": [
@@ -36,7 +36,7 @@ CURATED_PRODUCTS = {
             "matchScore": 65,
             "usage": "Наносить преимущественно на кожу головы и тщательно смывать.",
             "tradeoffs": ["При выраженном выпадении нужен врач, а не косметический шампунь."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://en.lador.co.kr/product/dermatical-hair-loss-shampoo-200ml/274/", "kind": "official"}],
+            "marketplaces": [],
         },
         {
             "name": "OLAPLEX Nº.5 Bond Maintenance® Conditioner",
@@ -45,7 +45,7 @@ CURATED_PRODUCTS = {
             "matchScore": 72,
             "usage": "Распределять по длине после шампуня, не перегружая корни.",
             "tradeoffs": ["Для очень тонких волос может потребоваться минимальное количество."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://olaplex.com/products/olaplex-n-5-bond-maintenance-conditioner-us", "kind": "official"}],
+            "marketplaces": [{"label": "Яндекс Маркет", "href": "https://ngo.integration.market.yandex.ru/card/olaplex-no-5-bond-maintenance---konditsioner-vosstanavlivayushchiy-250ml/103527276110", "kind": "marketplace"}],
         },
         {
             "name": "CHI 44 Iron Guard Thermal Protection Spray",
@@ -54,7 +54,7 @@ CURATED_PRODUCTS = {
             "matchScore": 69,
             "usage": "Равномерно наносить до горячей укладки и использовать разумную температуру.",
             "tradeoffs": ["Количество и дистанцию нанесения нужно подбирать под толщину волос."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://chi.com/es/categories/styling/sprays/44-iron-guard-thermal-protection-spray/1088.html?lang=en_US", "kind": "official"}],
+            "marketplaces": [],
         },
     ],
     "perfume": [
@@ -65,7 +65,7 @@ CURATED_PRODUCTS = {
             "matchScore": 70,
             "usage": "Сначала протестировать на коже и оценить звучание через несколько часов.",
             "tradeoffs": ["Стойкость и шлейф зависят от кожи и условий."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://www.maisonmargiela-fragrances.us/fragrances/replica/replica-lazy-sunday-morning/MM009.html", "kind": "official"}],
+            "marketplaces": [],
         },
         {
             "name": "Jo Malone London Wood Sage & Sea Salt Cologne",
@@ -74,7 +74,8 @@ CURATED_PRODUCTS = {
             "matchScore": 72,
             "usage": "Тестировать на коже и отдельно оценить мягкую громкость формата cologne.",
             "tradeoffs": ["Не стоит ожидать одинаковой стойкости на разной коже."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://www.jomalone.com/product/25946/32241/colognes/wood-sage-sea-salt-cologne", "kind": "official"}],
+            "priceRange": "около 5 600 ₽",
+            "marketplaces": [{"label": "ЦУМ", "href": "https://www.tsum.ru/product/he00455756-odekolon-wood-sage-sea-salt-50ml-jo-malone-london-bestcvetnyi/", "kind": "marketplace"}],
         },
         {
             "name": "Diptyque Eau Duelle Eau de Parfum",
@@ -83,7 +84,7 @@ CURATED_PRODUCTS = {
             "matchScore": 71,
             "usage": "Сначала сравнить на коже с Eau de Toilette: это разные концентрации и характер звучания.",
             "tradeoffs": ["Ваниль и дымные нюансы могут ощущаться интенсивнее в тепле."],
-            "marketplaces": [{"label": "Официальная карточка", "href": "https://www.diptyqueparis.com/en_us/p/fragrances/all-fragrances/eau-duelle-eau-de-parfum-75ml-1.html", "kind": "official"}],
+            "marketplaces": [],
         },
     ],
 }
@@ -96,8 +97,8 @@ def curated_fallback(mode: str, summary: str | None = None) -> dict:
         "mode": mode,
         "summary": summary or (
             f"Основной AI-поиск временно недоступен, поэтому показываю надёжную стартовую подборку по {label}. "
-            "Все ссылки ведут на отдельные официальные карточки; уточнить соответствие можно следующим запросом."
+            "Показываю только товары с подтверждённой отдельной карточкой маркетплейса; уточнить параметры можно следующим запросом."
         ),
-        "products": [dict(product) for product in CURATED_PRODUCTS[mode]],
+        "products": [dict(product) for product in CURATED_PRODUCTS[mode] if product.get("marketplaces")],
         "methodology": "curated-fallback",
     }

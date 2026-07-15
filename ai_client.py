@@ -17,11 +17,8 @@ load_dotenv(BASE_DIR / ".env")
 
 MODES = {"skin", "hair", "perfume"}
 DEFAULT_ALLOWED_HOSTS = {
-    "purito.com", "cosrx.com", "beautyofjoseon.com", "lador.co.kr",
-    "olaplex.com", "chi.com", "maisonmargiela.com",
-    "maisonmargiela-fragrances.us", "jomalone.com", "diptyqueparis.com",
-    "goldapple.ru", "letu.ru", "rivegauche.ru", "ozon.ru",
-    "wildberries.ru", "market.yandex.ru",
+    "goldapple.ru", "letu.ru", "rivegauche.ru", "wildberries.ru",
+    "market.yandex.ru", "tsum.ru",
 }
 
 _SHARED_ENGINE_RETRY_AT = 0.0
@@ -187,8 +184,7 @@ async def _call_shared_engine(user_text: str, mode: str) -> dict:
 
 
 def _allowed_hosts() -> set[str]:
-    extra = {item.strip().lower() for item in os.getenv("PRODUCT_LINK_ALLOWED_HOSTS", "").split(",") if item.strip()}
-    return DEFAULT_ALLOWED_HOSTS | extra
+    return DEFAULT_ALLOWED_HOSTS
 
 
 def _is_allowed_host(host: str) -> bool:
@@ -204,7 +200,7 @@ def _direct_url(value: str) -> str:
     if parsed.scheme != "https" or not parsed.netloc or not _is_allowed_host(parsed.hostname or ""):
         return ""
     route = f"{parsed.path} {parsed.query}".lower()
-    if re.search(r"/(search|catalogsearch|catalog/0/search|category|collections/all)(/|\?|$)", route):
+    if re.search(r"/(search|catalogsearch|catalog/0/search|category|collections/all|review)(/|\?|$)", route):
         return ""
     if re.search(r"(^|&)(q|query|text|search)=", parsed.query.lower()):
         return ""
@@ -252,7 +248,7 @@ def _link_label(url: str, fallback: str) -> str:
     host = (urlparse(url).hostname or "").lower()
     labels = {
         "goldapple": "Золотое Яблоко", "letu": "Лэтуаль", "rivegauche": "Рив Гош",
-        "ozon": "Ozon", "wildberries": "Wildberries", "market.yandex": "Яндекс Маркет",
+        "wildberries": "Wildberries", "market.yandex": "Яндекс Маркет", "tsum": "ЦУМ",
     }
     return next((label for marker, label in labels.items() if marker in host), fallback or "Карточка товара")
 
@@ -264,13 +260,10 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
     if len(name) < 5 or not category or not reason:
         return None
     proposed = []
-    official = _as_text(raw.get("official_url"), 700)
-    if official:
-        proposed.append(("Официальная карточка", official, "official"))
     retailers = raw.get("retailer_urls") if isinstance(raw.get("retailer_urls"), list) else []
-    for item in retailers[:4]:
+    for item in retailers[:6]:
         if isinstance(item, dict):
-            proposed.append((_as_text(item.get("label"), 40), _as_text(item.get("url"), 700), "retailer"))
+            proposed.append((_as_text(item.get("label"), 40), _as_text(item.get("url"), 700), "marketplace"))
     verified = await asyncio.gather(*[_verify_url(client, name, url) for _, url, _ in proposed])
     links = []
     for (label, _, kind), url in zip(proposed, verified):
@@ -285,7 +278,7 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
         "matchScore": _score(raw.get("match_score")),
         "usage": _as_text(raw.get("usage"), 400),
         "tradeoffs": _as_list(raw.get("tradeoffs"), 4),
-        "marketplaces": links[:4],
+        "marketplaces": links[:6],
     }
 
 

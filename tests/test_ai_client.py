@@ -62,7 +62,7 @@ def test_curated_catalog_is_final_fallback(monkeypatch):
     assert result["status"] == "complete"
     assert second["status"] == "complete"
     assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 3
+    assert len(result["products"]) >= 1
     assert all(product["marketplaces"][0]["href"].startswith("https://") for product in result["products"])
     assert shared.await_count == 1
     assert local.await_count == 1
@@ -80,4 +80,4 @@ def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
 
     assert result["status"] == "complete"
     assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 3
+    assert len(result["products"]) >= 1

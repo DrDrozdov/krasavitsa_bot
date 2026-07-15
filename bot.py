@@ -46,6 +46,7 @@ from beauty_flow import (
     previous_step,
     result_inline_keyboard,
     safe_edit,
+    search_inline_keyboard,
     saved_answers_context,
     saved_profile_keyboard,
     saved_profile_text,
@@ -102,10 +103,11 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 ACTIVE_MODES: dict[int, str] = {}
+ACTIVE_SEARCH_TASKS: dict[int, asyncio.Task] = {}
 MODE_ASSET_PATHS = {
-    "skin": BASE_DIR / "assets" / "skin-packshot-v2.webp",
-    "hair": BASE_DIR / "assets" / "hair-packshot-v2.webp",
-    "perfume": BASE_DIR / "assets" / "perfume-packshot-v2.webp",
+    "skin": BASE_DIR / "assets" / "skin-card-v1.png",
+    "hair": BASE_DIR / "assets" / "hair-card-v1.png",
+    "perfume": BASE_DIR / "assets" / "perfume-card-v1.png",
 }
 WELCOME_ASSET_PATH = BASE_DIR / "assets" / "welcome-v1.png"
 
@@ -451,6 +453,16 @@ async def callback_mode(callback: CallbackQuery):
     await show_mode_screen(callback.message, callback.from_user.id, mode, edit=True)
 
 
+@dp.callback_query(F.data == "search:cancel")
+async def callback_cancel_search(callback: CallbackQuery):
+    task = ACTIVE_SEARCH_TASKS.get(callback.from_user.id)
+    if not task or task.done():
+        await callback.answer("Подбор уже завершён")
+        return
+    task.cancel()
+    await callback.answer("Останавливаю подбор")
+
+
 @dp.callback_query(F.data.startswith("guide:"))
 async def callback_guide(callback: CallbackQuery):
     mode = (callback.data or "").split(":", 1)[1]
@@ -470,7 +482,11 @@ async def run_callback_search(callback: CallbackQuery, mode: str, query: str) ->
         return
     ACTIVE_MODES[callback.from_user.id] = mode
     save_user_beauty_state(callback.from_user.id, mode, query)
-    status_message = await render_panel(callback.message, f"{MODE_LABELS[mode]}\n\nНачинаю персональный подбор…")
+    status_message = await render_panel(
+        callback.message,
+        f"{MODE_LABELS[mode]}\n\n✨ Начинаю персональный подбор…",
+        search_inline_keyboard(),
+    )
     await perform_search(
         message=status_message,
         requester_id=callback.from_user.id,
@@ -1162,13 +1178,24 @@ async def perform_search(
     mode: str,
     status_message: Message | None = None,
 ) -> None:
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        previous_task = ACTIVE_SEARCH_TASKS.get(requester_id)
+        if previous_task and previous_task is not current_task and not previous_task.done():
+            previous_task.cancel()
+        ACTIVE_SEARCH_TASKS[requester_id] = current_task
     save_user(user_id=requester_id, username=requester_username)
     ACTIVE_MODES[requester_id] = mode
     save_user_beauty_state(requester_id, mode, text_to_process)
     if status_message is None:
-        status_message = await message.answer(f"Проверяю запрос: {MODE_LABELS[mode].lower()}…")
+        status_message = await message.answer(
+            f"✨ Проверяю запрос: {MODE_LABELS[mode].lower()}…",
+            reply_markup=search_inline_keyboard(),
+        )
     animation_done = asyncio.Event()
-    animation_task = asyncio.create_task(animate_search(status_message, mode, animation_done))
+    animation_task = asyncio.create_task(
+        animate_search(status_message, mode, animation_done, search_inline_keyboard())
+    )
     try:
         saved_profile = get_user_profile(requester_id) or {}
         profile_notes = []
@@ -1215,13 +1242,11 @@ async def perform_search(
                 continue
             name = _as_bot_text(product.get("name"))
             category = _as_bot_text(product.get("category"))
-            score = max(0, min(100, int(product.get("matchScore") or 0)))
-            answer += f"• <b>{html_text(name)}</b> · {score}%\n"
+            answer += f"• <b>{html_text(name)}</b>\n"
             if category:
-                answer += f"  {html_text(category)}\n"
-        answer += "\nПроцент — соответствие твоему запросу, а не рейтинг магазина."
+                answer += f"  <i>{html_text(category)}</i>\n"
 
-        await render_panel(status_message, answer, result_inline_keyboard(mode))
+        await render_panel(status_message, answer, search_inline_keyboard())
         rec_id = save_recommendation(user_id=requester_id, user_request=text_to_process, answer=answer)
         feedback_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
@@ -1238,7 +1263,7 @@ async def perform_search(
             product_reason = _as_bot_text(product.get("reason"))
             product_usage = _as_bot_text(product.get("usage"))
             tradeoffs = product.get("tradeoffs") if isinstance(product.get("tradeoffs"), list) else []
-            score = max(0, min(100, int(product.get("matchScore") or 0)))
+            price_range = _as_bot_text(product.get("priceRange"))
             link_items = product.get("marketplaces") if isinstance(product.get("marketplaces"), list) else []
             links = {
                 _as_bot_text(item.get("label")): _as_bot_text(item.get("href"))
@@ -1246,21 +1271,22 @@ async def perform_search(
                 if isinstance(item, dict) and is_http_url(_as_bot_text(item.get("href")))
             }
             product_id = save_recommended_product(user_id=requester_id, product_name=product_name)
-            link_buttons = [InlineKeyboardButton(text=label, url=url) for label, url in list(links.items())[:4]]
+            link_buttons = [InlineKeyboardButton(text=f"🛍️ {label}", url=url) for label, url in list(links.items())[:6]]
             buttons = [link_buttons[index:index + 2] for index in range(0, len(link_buttons), 2)]
             buttons.append([
                 InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}"),
                 InlineKeyboardButton(text="👎 Не подходит", callback_data=f"product_bad:{product_id}"),
             ])
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-            image_url = next(iter(links.values()), "")
+            image_value = _as_bot_text(product.get("image"))
+            image_url = urljoin(WEBSITE_URL, image_value) if image_value else ""
             caption = build_product_caption(
                 product_name=product_name,
                 product_category=product_category,
-                match_score=score,
                 why=product_reason,
                 usage=product_usage,
                 tradeoffs=tradeoffs,
+                price_range=price_range,
             )
             product_card_tasks.append(asyncio.create_task(prepare_product_card(
                 product_name=product_name,
@@ -1273,8 +1299,15 @@ async def perform_search(
 
         for task in asyncio.as_completed(product_card_tasks):
             await send_prepared_product_card(message, await task)
+        await safe_edit(status_message, answer, result_inline_keyboard(mode))
         await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
 
+    except asyncio.CancelledError:
+        await render_panel(
+            status_message,
+            "⛔ <b>Подбор остановлен</b>\n\nТвои ответы сохранены — можно продолжить позже или изменить параметры.",
+            mode_inline_keyboard(mode, has_saved_profile=bool((get_beauty_profile(requester_id, mode) or {}).get("answers"))),
+        )
     except BeautyServiceBusyError:
         await render_panel(
             status_message,
@@ -1301,6 +1334,8 @@ async def perform_search(
             animation_task.cancel()
         with suppress(asyncio.CancelledError):
             await animation_task
+        if ACTIVE_SEARCH_TASKS.get(requester_id) is current_task:
+            ACTIVE_SEARCH_TASKS.pop(requester_id, None)
 
 
 @dp.message(F.text)
@@ -1903,7 +1938,7 @@ def load_mode_fallback_image(mode: str, product_name: str) -> BufferedInputFile 
     if not asset_path or not asset_path.is_file():
         return None
     try:
-        return _prepare_telegram_photo(asset_path.read_bytes(), "image/webp", product_name)
+        return _prepare_telegram_photo(asset_path.read_bytes(), "image/png", product_name)
     except OSError:
         return None
 
@@ -2044,11 +2079,11 @@ def normalize_price_range(price_range: str) -> str:
 
 def format_price_range(price_range: str) -> str:
     if not price_range:
-        return "💵 <b>Цена:</b> ориентировочно"
+        return "💵 <b>Цена:</b> уточняется в карточках магазинов"
 
     price = normalize_price_range(price_range)
     if not price:
-        return "💵 <b>Цена:</b> ориентировочно"
+        return "💵 <b>Цена:</b> уточняется в карточках магазинов"
 
     return f"💵 <b>Цена:</b> <code>{html_text(price)}</code>"
 
@@ -2056,24 +2091,24 @@ def format_price_range(price_range: str) -> str:
 def build_product_caption(
     product_name: str,
     product_category: str,
-    match_score: int,
     why: str,
     usage: str = "",
     tradeoffs: list | None = None,
+    price_range: str = "",
 ) -> str:
     emoji = get_category_emoji(product_category)
     category_text = html_text(product_category or "Средство")
     product_text = html_text(product_name)
     title = f"{emoji} <b>{category_text}</b>\n<code>{product_text}</code>"
-    caption = f"{title}\n\n🎯 <b>Соответствие запросу:</b> {max(0, min(100, match_score))}%"
+    caption = f"{title}\n\n{format_price_range(price_range)}"
     if why:
-        caption += f"\n\n{html_text(why)}"
+        caption += f"\n\n💗 <b>Почему здесь</b>\n{html_text(why)}"
     if usage:
-        caption += f"\n\n<b>Как использовать или тестировать:</b>\n{html_text(usage)}"
+        caption += f"\n\n✨ <b>Как использовать или тестировать</b>\n{html_text(usage)}"
     clean_tradeoffs = [html_text(item) for item in (tradeoffs or []) if str(item or "").strip()]
     if clean_tradeoffs:
-        caption += f"\n\n<b>Важно:</b> {(' · '.join(clean_tradeoffs))}"
-    caption += "\n\nСсылки ниже ведут только на проверенные отдельные карточки."
+        caption += f"\n\n⚠️ <b>Учесть:</b> {(' · '.join(clean_tradeoffs))}"
+    caption += "\n\n🛍️ Ниже — только проверенные отдельные карточки товара."
 
     return caption
 

@@ -11,9 +11,9 @@ from aiogram.types import (
 
 
 MODE_LABELS = {
-    "skin": "Кожа",
-    "hair": "Волосы",
-    "perfume": "Парфюм",
+    "skin": "Кожа 💧",
+    "hair": "Волосы 💇‍♀️",
+    "perfume": "Парфюм 🌸",
 }
 
 MODE_ICONS = {
@@ -235,27 +235,27 @@ SESSIONS: dict[int, FlowSession] = {}
 def main_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Кожа", callback_data="mode:skin"),
-            InlineKeyboardButton(text="Волосы", callback_data="mode:hair"),
-            InlineKeyboardButton(text="Парфюм", callback_data="mode:perfume"),
+            InlineKeyboardButton(text="💧 Кожа", callback_data="mode:skin"),
+            InlineKeyboardButton(text="💇‍♀️ Волосы", callback_data="mode:hair"),
+            InlineKeyboardButton(text="🌸 Парфюм", callback_data="mode:perfume"),
         ],
         [
-            InlineKeyboardButton(text="Написать запрос", callback_data="free:text"),
-            InlineKeyboardButton(text="Повторить последний", callback_data="repeat:last"),
+            InlineKeyboardButton(text="✍️ Свой запрос", callback_data="free:text"),
+            InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat:last"),
         ],
-        [InlineKeyboardButton(text="Сайт Красавицы", url="https://krasavitsa-ai.ru/")],
+        [InlineKeyboardButton(text="✨ Сайт Красавицы", url="https://krasavitsa-ai.ru/")],
     ])
 
 
 def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKeyboardMarkup:
     rows = [[
-        InlineKeyboardButton(text="Без анкеты", callback_data=f"direct:{mode}"),
-        InlineKeyboardButton(text="Настроить", callback_data=f"guide:{mode}"),
+        InlineKeyboardButton(text="✍️ Написать своими словами", callback_data=f"direct:{mode}"),
+        InlineKeyboardButton(text="✨ Ответить на вопросы", callback_data=f"guide:{mode}"),
     ]]
     if has_saved_profile:
-        rows.append([InlineKeyboardButton(text="Мои сохранённые параметры", callback_data=f"saved:{mode}")])
+        rows.append([InlineKeyboardButton(text="💾 Мои сохранённые параметры", callback_data=f"saved:{mode}")])
     rows.append(
-        [InlineKeyboardButton(text="Главное меню", callback_data="menu:main")],
+        [InlineKeyboardButton(text="← Главное меню", callback_data="menu:main")],
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -263,10 +263,16 @@ def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKe
 def result_inline_keyboard(mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Ещё подбор", callback_data=f"mode:{mode}"),
-            InlineKeyboardButton(text="Мои параметры", callback_data=f"saved:{mode}"),
+            InlineKeyboardButton(text="✨ Новый подбор", callback_data=f"mode:{mode}"),
+            InlineKeyboardButton(text="💾 Мои параметры", callback_data=f"saved:{mode}"),
         ],
-        [InlineKeyboardButton(text="Главное меню", callback_data="menu:main")],
+        [InlineKeyboardButton(text="← Главное меню", callback_data="menu:main")],
+    ])
+
+
+def search_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⛔ Остановить подбор", callback_data="search:cancel")],
     ])
 
 
@@ -518,7 +524,12 @@ SEARCH_PHASES = {
 }
 
 
-async def animate_search(status_message: Message, mode: str, done: asyncio.Event) -> None:
+async def animate_search(
+    status_message: Message,
+    mode: str,
+    done: asyncio.Event,
+    keyboard: InlineKeyboardMarkup | None = None,
+) -> None:
     phases = SEARCH_PHASES[mode]
     tick = 0
     while not done.is_set():
@@ -532,7 +543,7 @@ async def animate_search(status_message: Message, mode: str, done: asyncio.Event
             f"<code>{filled}{empty}</code>"
         )
         await status_message.bot.send_chat_action(chat_id=status_message.chat.id, action=ChatAction.TYPING)
-        await safe_edit(status_message, text)
+        await safe_edit(status_message, text, keyboard)
         tick += 1
         try:
             await asyncio.wait_for(done.wait(), timeout=1.8)
@@ -541,7 +552,7 @@ async def animate_search(status_message: Message, mode: str, done: asyncio.Event
 
 
 def all_callback_data() -> list[str]:
-    values = ["menu:main", "free:text", "repeat:last", "retry:last"]
+    values = ["menu:main", "free:text", "repeat:last", "retry:last", "search:cancel"]
     for mode, steps in FLOW_STEPS.items():
         values.extend((
             f"mode:{mode}", f"direct:{mode}", f"guide:{mode}", f"finish:{mode}",

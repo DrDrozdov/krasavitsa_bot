@@ -143,7 +143,19 @@ def test_every_mode_has_a_branded_fallback_image():
     for mode in ("skin", "hair", "perfume"):
         result = bot.load_mode_fallback_image(mode, "Test Product")
         assert result is not None
-        assert result.filename == "Test_Product.jpg"
+        assert result.filename == "Test_Product.png"
+
+
+def test_product_caption_has_price_and_no_fake_match_percentage():
+    caption = bot.build_product_caption(
+        product_name="Test Product",
+        product_category="Крем",
+        why="Подходит по текстуре.",
+        price_range="800-1000 ₽",
+    )
+    assert "800 – 1000 ₽" in caption
+    assert "Соответствие запросу" not in caption
+    assert "%" not in caption
 
 
 def test_welcome_image_is_packaged_with_bot():

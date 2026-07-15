@@ -69,6 +69,14 @@ def test_saved_answers_are_rendered_as_human_profile_context():
 
 def test_every_callback_data_fits_telegram_limit():
     assert all(len(value.encode("utf-8")) <= 64 for value in all_callback_data())
+    assert "search:cancel" in all_callback_data()
+
+
+def test_mode_choices_use_clear_human_labels():
+    labels = [button.text for row in beauty_flow.mode_inline_keyboard("skin").inline_keyboard for button in row]
+    assert "✍️ Написать своими словами" in labels
+    assert "✨ Ответить на вопросы" in labels
+    assert all("анкет" not in label.lower() for label in labels)
 
 
 def test_intro_without_photo_has_no_single_letter_placeholder():
