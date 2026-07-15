@@ -64,3 +64,26 @@ def test_shared_contract_keeps_three_direct_links_with_two_real_prices():
 
     assert result["status"] == "complete"
     assert all(len(item["marketplaces"]) == 3 for item in result["products"])
+
+
+def test_shared_contract_accepts_resilient_cards_with_one_observed_price():
+    product = {
+        "name": "COSRX Low pH Good Morning Gel Cleanser",
+        "marketplaces": [
+            {"label": "Яндекс Маркет", "href": "https://market.yandex.ru/card/item/123"},
+            {"label": "Ozon", "href": "https://www.ozon.ru/product/item-456/"},
+            {
+                "label": "Wildberries",
+                "href": "https://www.wildberries.ru/catalog/1174501085/detail.aspx",
+                "price": 1429,
+            },
+        ],
+    }
+    payload = {"status": "complete", "products": [dict(product) for _ in range(3)]}
+    for index, item in enumerate(payload["products"]):
+        item["name"] += f" {index}"
+
+    result = ai_client._ensure_complete_result(payload, "skin")
+
+    assert result["status"] == "complete"
+    assert all(item["priceRange"] == "около 1 429 ₽" for item in result["products"])

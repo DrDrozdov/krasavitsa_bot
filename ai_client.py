@@ -67,11 +67,17 @@ def _ensure_complete_result(data: dict, mode: str, minimum: int = 3) -> dict:
         if len({_store_key(item["href"]) for item in verified_links}) < 3:
             continue
         priced_links = [item for item in verified_links if isinstance(item.get("price"), (int, float))]
-        if len({_store_key(item["href"]) for item in priced_links}) < 2:
+        # The shared core prefers two observed prices, but can deliberately return
+        # one-price resilient cards when retailers hide prices from server-side
+        # checks. Keep three exact stores and never invent a second price here.
+        if len({_store_key(item["href"]) for item in priced_links}) < 1:
             continue
         if not _as_text(product.get("priceRange"), 80):
             prices = [int(item["price"]) for item in priced_links]
-            product["priceRange"] = f"{min(prices):,}–{max(prices):,} ₽".replace(",", " ")
+            low, high = min(prices), max(prices)
+            product["priceRange"] = (
+                f"около {low:,} ₽" if low == high else f"{low:,}–{high:,} ₽"
+            ).replace(",", " ")
         product["marketplaces"] = verified_links
         result.append(product)
         if len(result) >= 4:
