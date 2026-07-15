@@ -47,3 +47,26 @@ def test_favorite_delete():
     database.delete_favorite(fav_id)
     favorites = database.get_favorites(user_id=1)
     assert len(favorites) == 0
+
+
+def test_beauty_profile_persists_each_mode_independently():
+    database.save_user(user_id=1, username="tester")
+    database.save_beauty_profile(1, "skin", {"skin_type": "combo", "budget": "3000"}, 2)
+    database.save_beauty_profile(1, "hair", {"hair_type": "curly"}, 1)
+
+    skin = database.get_beauty_profile(1, "skin")
+    hair = database.get_beauty_profile(1, "hair")
+
+    assert skin["answers"] == {"budget": "3000", "skin_type": "combo"}
+    assert skin["current_step"] == 2
+    assert hair["answers"] == {"hair_type": "curly"}
+
+
+def test_user_beauty_state_keeps_last_query_when_only_mode_changes():
+    database.save_user_beauty_state(1, "perfume", "подбери древесный аромат")
+    database.save_user_beauty_state(1, "hair")
+
+    state = database.get_user_beauty_state(1)
+    assert state["active_mode"] == "hair"
+    assert state["last_query"] == "подбери древесный аромат"
+    assert state["last_query_mode"] == "perfume"

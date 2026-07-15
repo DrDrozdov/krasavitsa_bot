@@ -1,9 +1,16 @@
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import beauty_flow
 from beauty_flow import (
     FLOW_STEPS,
     all_callback_data,
     build_query,
     choose_option,
     main_text,
+    previous_step,
+    serialize_answers,
     skip_step,
     start_flow,
 )
@@ -40,5 +47,41 @@ def test_selected_options_are_included_in_search_query():
     assert "Древесный" in query
 
 
+def test_hair_flow_covers_type_scalp_and_length_state():
+    keys = {step.key for step in FLOW_STEPS["hair"]}
+    assert {"focus", "hair_type", "scalp_type", "hair_state", "budget"} <= keys
+
+
+def test_going_back_preserves_selected_answers():
+    start_flow(9003, "skin")
+    session, _ = choose_option(9003, "skin", 0, "dry")
+    session, _ = choose_option(9003, "skin", 1, "combo")
+    session = previous_step(9003, "skin", 2)
+    assert serialize_answers(session) == {"goal": "dry", "skin_type": "combo"}
+
+
 def test_every_callback_data_fits_telegram_limit():
     assert all(len(value.encode("utf-8")) <= 64 for value in all_callback_data())
+
+
+def test_intro_always_sends_final_menu_when_edit_fails(monkeypatch):
+    temporary_card = SimpleNamespace(delete=AsyncMock())
+    final_card = SimpleNamespace()
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=1),
+        bot=SimpleNamespace(send_chat_action=AsyncMock()),
+        answer=AsyncMock(side_effect=[temporary_card, final_card]),
+    )
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(beauty_flow.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(beauty_flow, "safe_edit", AsyncMock(side_effect=[False, False]))
+
+    result = asyncio.run(beauty_flow.animate_intro(message))
+
+    assert result is final_card
+    assert message.answer.await_count == 2
+    assert "Красавица" in message.answer.await_args_list[-1].args[0]
+    temporary_card.delete.assert_awaited_once()

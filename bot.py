@@ -28,7 +28,7 @@ from aiogram.types import (
     KeyboardButton
 )
 
-from ai_client import ask_deepseek
+from ai_client import BeautyServiceBusyError, ask_deepseek
 from beauty_flow import (
     MODE_LABELS,
     animate_intro,
@@ -45,6 +45,9 @@ from beauty_flow import (
     previous_step,
     result_inline_keyboard,
     safe_edit,
+    saved_profile_keyboard,
+    saved_profile_text,
+    serialize_answers,
     skip_step,
     start_flow,
 )
@@ -54,6 +57,10 @@ from database import (
     save_user,
     update_user_profile,
     get_user_profile,
+    get_beauty_profile,
+    get_user_beauty_state,
+    save_beauty_profile,
+    save_user_beauty_state,
     save_recommendation,
     get_user_recommendations,
     save_feedback,
@@ -244,14 +251,52 @@ async def site_cmd(message: Message):
 
 async def show_mode_screen(message: Message, user_id: int, mode: str, edit: bool = False) -> None:
     ACTIVE_MODES[user_id] = mode
+    save_user_beauty_state(user_id, mode)
+    saved_profile = get_beauty_profile(user_id, mode) or {}
+    keyboard = mode_inline_keyboard(mode, has_saved_profile=bool(saved_profile.get("answers")))
     if edit:
-        await safe_edit(message, mode_text(mode), mode_inline_keyboard(mode))
+        await render_panel(message, mode_text(mode), keyboard)
     else:
-        await message.answer(mode_text(mode), parse_mode="HTML", reply_markup=mode_inline_keyboard(mode))
+        await message.answer(mode_text(mode), parse_mode="HTML", reply_markup=keyboard)
+
+
+async def render_panel(
+    message: Message,
+    text: str,
+    keyboard: InlineKeyboardMarkup | None = None,
+) -> Message:
+    if await safe_edit(message, text, keyboard):
+        return message
+    return await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+def load_flow_session(user_id: int, mode: str, preserve_saved: bool = True):
+    saved = get_beauty_profile(user_id, mode) if preserve_saved else None
+    return start_flow(user_id, mode, answers=(saved or {}).get("answers", {}))
+
+
+def persist_flow_session(user_id: int, session) -> None:
+    save_beauty_profile(
+        user_id=user_id,
+        mode=session.mode,
+        answers=serialize_answers(session),
+        current_step=session.step,
+    )
+
+
+def retry_keyboard(mode: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Повторить запрос", callback_data="retry:last")],
+        [
+            InlineKeyboardButton(text="Изменить параметры", callback_data=f"saved:{mode}"),
+            InlineKeyboardButton(text="Главное меню", callback_data="menu:main"),
+        ],
+    ])
 
 
 @dp.message(Command("pick"))
 async def pick_command(message: Message):
+    save_user(user_id=message.from_user.id, username=message.from_user.username)
     await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
 
 
@@ -274,14 +319,14 @@ async def perfume_command(message: Message):
 async def callback_main_menu(callback: CallbackQuery):
     await callback.answer()
     if callback.message:
-        await safe_edit(callback.message, main_text(), main_inline_keyboard())
+        await render_panel(callback.message, main_text(), main_inline_keyboard())
 
 
 @dp.callback_query(F.data == "free:text")
 async def callback_free_text(callback: CallbackQuery):
     await callback.answer("Можно писать своими словами")
     if callback.message:
-        await safe_edit(
+        await render_panel(
             callback.message,
             "⌨️ <b>Свободный запрос</b>\n\nНапишите, что хочется подобрать. Я сама определю направление и задам только действительно важный вопрос.",
             InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Главное меню", callback_data="menu:main")]]),
@@ -304,24 +349,27 @@ async def callback_guide(callback: CallbackQuery):
     if mode not in MODE_LABELS or not callback.message:
         await callback.answer("Не удалось открыть сценарий", show_alert=True)
         return
-    session = start_flow(callback.from_user.id, mode)
+    session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
+    session.step = 0
+    persist_flow_session(callback.from_user.id, session)
     ACTIVE_MODES[callback.from_user.id] = mode
     await callback.answer()
-    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+    await render_panel(callback.message, flow_text(session), flow_keyboard(session))
 
 
 async def run_callback_search(callback: CallbackQuery, mode: str, query: str) -> None:
     if not callback.message:
         return
     ACTIVE_MODES[callback.from_user.id] = mode
-    await safe_edit(callback.message, f"{MODE_LABELS[mode]}\n\nНачинаю персональный подбор…")
+    save_user_beauty_state(callback.from_user.id, mode, query)
+    status_message = await render_panel(callback.message, f"{MODE_LABELS[mode]}\n\nНачинаю персональный подбор…")
     await perform_search(
-        message=callback.message,
+        message=status_message,
         requester_id=callback.from_user.id,
         requester_username=callback.from_user.username,
         text_to_process=query,
         mode=mode,
-        status_message=callback.message,
+        status_message=status_message,
     )
 
 
@@ -348,11 +396,12 @@ async def callback_flow_option(callback: CallbackQuery):
         await callback.answer("Кнопка устарела", show_alert=True)
         return
     session, complete = choose_option(callback.from_user.id, mode, step_index, value)
+    persist_flow_session(callback.from_user.id, session)
     await callback.answer("Выбрано")
     if complete:
         await run_callback_search(callback, mode, build_query(session, mode))
         return
-    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+    await render_panel(callback.message, flow_text(session), flow_keyboard(session))
 
 
 @dp.callback_query(F.data.startswith("skip:"))
@@ -368,11 +417,12 @@ async def callback_skip_step(callback: CallbackQuery):
         await callback.answer("Кнопка устарела", show_alert=True)
         return
     session, complete = skip_step(callback.from_user.id, mode, step_index)
+    persist_flow_session(callback.from_user.id, session)
     await callback.answer("Пропущено")
     if complete:
         await run_callback_search(callback, mode, build_query(session, mode, exploratory=True))
         return
-    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+    await render_panel(callback.message, flow_text(session), flow_keyboard(session))
 
 
 @dp.callback_query(F.data.startswith("back:"))
@@ -387,8 +437,9 @@ async def callback_previous_step(callback: CallbackQuery):
         await callback.answer("Кнопка устарела", show_alert=True)
         return
     session = previous_step(callback.from_user.id, parts[1], step_index)
+    persist_flow_session(callback.from_user.id, session)
     await callback.answer()
-    await safe_edit(callback.message, flow_text(session), flow_keyboard(session))
+    await render_panel(callback.message, flow_text(session), flow_keyboard(session))
 
 
 @dp.callback_query(F.data.startswith("finish:"))
@@ -398,8 +449,67 @@ async def callback_finish_flow(callback: CallbackQuery):
         await callback.answer("Направление недоступно", show_alert=True)
         return
     session = get_session(callback.from_user.id, mode)
+    if session:
+        persist_flow_session(callback.from_user.id, session)
     await callback.answer("Собираю варианты")
     await run_callback_search(callback, mode, build_query(session, mode, exploratory=True))
+
+
+@dp.callback_query(F.data.startswith("saved:"))
+async def callback_saved_profile(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS or not callback.message:
+        await callback.answer("Профиль недоступен", show_alert=True)
+        return
+    session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
+    await callback.answer()
+    await render_panel(
+        callback.message,
+        saved_profile_text(session),
+        saved_profile_keyboard(mode, bool(session.answers)),
+    )
+
+
+@dp.callback_query(F.data.startswith("edit_saved:"))
+async def callback_edit_saved_profile(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS or not callback.message:
+        await callback.answer("Профиль недоступен", show_alert=True)
+        return
+    session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
+    session.step = 0
+    persist_flow_session(callback.from_user.id, session)
+    await callback.answer()
+    await render_panel(callback.message, flow_text(session), flow_keyboard(session))
+
+
+@dp.callback_query(F.data.startswith("use_saved:"))
+async def callback_use_saved_profile(callback: CallbackQuery):
+    mode = (callback.data or "").split(":", 1)[1]
+    if mode not in MODE_LABELS or not callback.message:
+        await callback.answer("Профиль недоступен", show_alert=True)
+        return
+    session = load_flow_session(callback.from_user.id, mode, preserve_saved=True)
+    if not session.answers:
+        await callback.answer("Сначала выбери параметры", show_alert=True)
+        return
+    await callback.answer("Использую сохранённые параметры")
+    await run_callback_search(callback, mode, build_query(session, mode))
+
+
+@dp.callback_query(F.data.in_({"repeat:last", "retry:last"}))
+async def callback_repeat_last(callback: CallbackQuery):
+    if not callback.message:
+        await callback.answer()
+        return
+    state = get_user_beauty_state(callback.from_user.id) or {}
+    mode = state.get("last_query_mode") or state.get("active_mode")
+    query = str(state.get("last_query") or "").strip()
+    if mode not in MODE_LABELS or not query:
+        await callback.answer("Сохранённого запроса пока нет", show_alert=True)
+        return
+    await callback.answer("Повторяю последний подбор")
+    await run_callback_search(callback, mode, query)
 
 
 @dp.message(F.text == "💧 Кожа")
@@ -784,6 +894,11 @@ async def product_stats(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
+@dp.message(Command("admin_stats"))
+async def admin_stats_command(message: Message):
+    await admin_stats(message)
+
+
 COSMETIC_REQUEST_KEYWORDS = {
     "акне",
     "антиоксидант",
@@ -941,6 +1056,7 @@ async def perform_search(
 ) -> None:
     save_user(user_id=requester_id, username=requester_username)
     ACTIVE_MODES[requester_id] = mode
+    save_user_beauty_state(requester_id, mode, text_to_process)
     if status_message is None:
         status_message = await message.answer(f"Проверяю запрос: {MODE_LABELS[mode].lower()}…")
     animation_done = asyncio.Event()
@@ -968,7 +1084,12 @@ async def perform_search(
             reply = f"<b>{html_text(MODE_LABELS[mode])}</b>\n\n{html_text(summary)}"
             if follow_up:
                 reply += f"\n\n<b>Уточни:</b> {html_text(follow_up)}"
-            await safe_edit(status_message, reply, mode_inline_keyboard(mode))
+            saved_profile = get_beauty_profile(requester_id, mode) or {}
+            await render_panel(
+                status_message,
+                reply,
+                mode_inline_keyboard(mode, has_saved_profile=bool(saved_profile.get("answers"))),
+            )
             return
 
         answer = f"✨ <b>Красавица · {html_text(MODE_LABELS[mode])}</b>\n\n"
@@ -985,7 +1106,7 @@ async def perform_search(
                 answer += f"  {html_text(category)}\n"
         answer += "\nПроцент — соответствие твоему запросу, а не рейтинг магазина."
 
-        await safe_edit(status_message, answer, result_inline_keyboard(mode))
+        await render_panel(status_message, answer, result_inline_keyboard(mode))
         rec_id = save_recommendation(user_id=requester_id, user_request=text_to_process, answer=answer)
         feedback_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
@@ -1039,13 +1160,24 @@ async def perform_search(
             await send_prepared_product_card(message, await task)
         await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
 
-    except ValueError as error:
-        await safe_edit(status_message, html_text(str(error)), mode_inline_keyboard(mode))
+    except BeautyServiceBusyError:
+        await render_panel(
+            status_message,
+            "⏳ <b>Сервис подбора занят</b>\n\nПараметры уже сохранены. Нажми «Повторить запрос» через минуту — заполнять анкету заново не потребуется.",
+            retry_keyboard(mode),
+        )
+    except ValueError:
+        saved_profile = get_beauty_profile(requester_id, mode) or {}
+        await render_panel(
+            status_message,
+            "Не получилось завершить проверку источников. Параметры сохранены — можно повторить подбор или изменить ответы.",
+            mode_inline_keyboard(mode, has_saved_profile=bool(saved_profile.get("answers"))),
+        )
     except Exception as error:
-        await safe_edit(
+        await render_panel(
             status_message,
             "Не получилось завершить проверку. Попробуй ещё раз или уточни запрос.",
-            mode_inline_keyboard(mode),
+            retry_keyboard(mode),
         )
         print(error)
     finally:
@@ -1060,6 +1192,9 @@ async def perform_search(
 async def handle_text(message: Message, user_text: str | None = None, loading_msg: Message | None = None):
     text_to_process = (user_text or message.text or "").strip()
     user_id = message.from_user.id
+    if user_text is None and text_to_process.startswith("/"):
+        await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
+        return
     if user_text is None and is_thanks_message(text_to_process):
         await message.answer(build_thanks_reply(), reply_markup=main_inline_keyboard())
         return
@@ -1067,7 +1202,13 @@ async def handle_text(message: Message, user_text: str | None = None, loading_ms
         await message.answer(build_offtopic_reply(), reply_markup=main_inline_keyboard())
         return
 
-    mode = detect_mode(text_to_process) or ACTIVE_MODES.get(user_id, "skin")
+    saved_state = get_user_beauty_state(user_id) or {}
+    mode = (
+        detect_mode(text_to_process)
+        or ACTIVE_MODES.get(user_id)
+        or saved_state.get("active_mode")
+        or "skin"
+    )
     await perform_search(
         message=message,
         requester_id=user_id,

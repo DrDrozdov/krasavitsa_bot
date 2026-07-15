@@ -23,6 +23,18 @@ DEFAULT_ALLOWED_HOSTS = {
 }
 
 
+class BeautyServiceBusyError(ValueError):
+    """Temporary upstream rate limit; the saved request can be retried safely."""
+
+
+def _retry_delay(response: httpx.Response, attempt: int) -> float:
+    try:
+        header_delay = float(response.headers.get("retry-after", ""))
+    except (TypeError, ValueError):
+        header_delay = 0
+    return min(3.0, max(header_delay, 0.8 * (attempt + 1)))
+
+
 def _get_default_base_url(api_key: str) -> str:
     return "https://api.aitunnel.ru/v1" if api_key.startswith("sk-aitunnel-") else "https://api.deepseek.com"
 
@@ -42,6 +54,20 @@ def _as_list(value, limit: int = 5) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_as_text(item, 260) for item in value if _as_text(item, 260)][:limit]
+
+
+def _is_exploratory_request(user_text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", str(user_text or "").lower().replace("ё", "е")).strip()
+    markers = (
+        "осознанный ознакомительный подбор",
+        "не знаю",
+        "без предпочтений",
+        "не важно",
+        "покажи варианты",
+        "хочу варианты",
+        "подбери сразу",
+    )
+    return any(marker in normalized for marker in markers)
 
 
 def _score(value) -> int:
@@ -85,13 +111,20 @@ async def _call_model(system: str, user: str, max_tokens: int) -> dict:
     }
     try:
         async with httpx.AsyncClient(timeout=28, follow_redirects=True) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=payload,
+            for attempt in range(3):
+                response = await client.post(
+                    f"{base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    return _extract_model_json(response.json())
+                if attempt < 2:
+                    await asyncio.sleep(_retry_delay(response, attempt))
+            raise BeautyServiceBusyError(
+                "Сервис подбора сейчас перегружен. Параметры сохранены — повтори запрос через минуту."
             )
-            response.raise_for_status()
-            return _extract_model_json(response.json())
     except httpx.TimeoutException as exc:
         raise ValueError("Превышено время ожидания DeepSeek.") from exc
     except httpx.HTTPStatusError as exc:
@@ -99,7 +132,11 @@ async def _call_model(system: str, user: str, max_tokens: int) -> dict:
             raise ValueError("DeepSeek не принял API-ключ.") from exc
         if exc.response.status_code == 402:
             raise ValueError("На аккаунте DeepSeek нет доступного баланса.") from exc
-        raise ValueError(f"DeepSeek вернул HTTP {exc.response.status_code}.") from exc
+        if exc.response.status_code == 429:
+            raise BeautyServiceBusyError(
+                "Сервис подбора сейчас перегружен. Параметры сохранены — повтори запрос через минуту."
+            ) from exc
+        raise ValueError("Сервис подбора временно недоступен.") from exc
     except (httpx.RequestError, json.JSONDecodeError) as exc:
         raise ValueError("Не удалось получить корректный ответ DeepSeek.") from exc
 
@@ -117,9 +154,20 @@ async def _call_shared_engine(user_text: str, mode: str) -> dict:
         raise ValueError("SHARED_ENGINE_NOT_CONFIGURED")
     try:
         async with httpx.AsyncClient(timeout=65, follow_redirects=True) as client:
-            response = await client.post(endpoint, json={"query": user_text, "mode": mode})
-            response.raise_for_status()
-            data = response.json()
+            for attempt in range(2):
+                response = await client.post(endpoint, json={"query": user_text, "mode": mode})
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                if attempt == 0:
+                    await asyncio.sleep(_retry_delay(response, attempt))
+            else:
+                raise BeautyServiceBusyError(
+                    "Сервис подбора сейчас перегружен. Параметры сохранены — повтори запрос через минуту."
+                )
+    except BeautyServiceBusyError:
+        raise
     except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as exc:
         raise ValueError("Общий движок «Красавицы» временно недоступен.") from exc
     if not isinstance(data, dict):
@@ -235,6 +283,9 @@ async def _local_pipeline(user_text: str, mode: str) -> dict:
     decision = triage.get("decision", "ready")
     summary = _as_text(triage.get("summary")) or "Запрос принят."
     question = _as_text(triage.get("question"), 300)
+    if decision == "clarify" and _is_exploratory_request(user_text):
+        decision = "ready"
+        summary = summary or "Пользователь хочет посмотреть разные направления без жёстких ограничений."
     if decision in {"clarify", "decline"}:
         return {"status": "needs_input", "mode": mode, "summary": summary, "followUpQuestion": question or "Уточни цель, ограничения и бюджет.", "products": [], "methodology": "grounded-v2"}
     if decision == "safety":

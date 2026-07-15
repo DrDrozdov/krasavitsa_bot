@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from aiogram.enums import ChatAction
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -50,7 +50,7 @@ FLOW_STEPS: dict[str, tuple[FlowStep, ...]] = {
     "skin": (
         FlowStep(
             "goal",
-            "Шаг 1 из 3",
+            "Шаг 1 из 4",
             "Что хочется изменить?",
             "Можно выбрать направление или пропустить вопрос.",
             (
@@ -64,7 +64,7 @@ FLOW_STEPS: dict[str, tuple[FlowStep, ...]] = {
         ),
         FlowStep(
             "skin_type",
-            "Шаг 2 из 3",
+            "Шаг 2 из 4",
             "Как кожа ведёт себя обычно?",
             "Если не уверены — это нормально, выберите «Не знаю».",
             (
@@ -77,8 +77,22 @@ FLOW_STEPS: dict[str, tuple[FlowStep, ...]] = {
             ),
         ),
         FlowStep(
+            "sensitivity",
+            "Шаг 3 из 4",
+            "Есть важные ограничения?",
+            "Так мы не предложим заведомо неподходящий актив или текстуру.",
+            (
+                FlowOption("Нет", "none"),
+                FlowOption("Легко раздражается", "reactive"),
+                FlowOption("Нарушен барьер", "barrier"),
+                FlowOption("Не переношу отдушки", "fragrance_free"),
+                FlowOption("Без кислот и ретиноидов", "no_actives"),
+                FlowOption("Не знаю", "unknown"),
+            ),
+        ),
+        FlowStep(
             "budget",
-            "Шаг 3 из 3",
+            "Шаг 4 из 4",
             "Комфортный бюджет на одно средство",
             "Бюджет помогает не показывать заведомо неподходящие варианты.",
             (
@@ -92,35 +106,63 @@ FLOW_STEPS: dict[str, tuple[FlowStep, ...]] = {
     "hair": (
         FlowStep(
             "focus",
-            "Шаг 1 из 3",
+            "Шаг 1 из 5",
             "На чём сосредоточиться?",
             "Кожу головы и длину оцениваем отдельно.",
             (
+                FlowOption("Полный уход", "routine"),
                 FlowOption("Кожа головы", "scalp"),
                 FlowOption("Сухая длина", "dry_length"),
                 FlowOption("Ломкость", "breakage"),
-                FlowOption("Кудри", "curls"),
-                FlowOption("Окрашивание", "colored"),
+                FlowOption("Объём", "volume"),
                 FlowOption("Термозащита", "heat"),
             ),
         ),
         FlowStep(
-            "profile",
-            "Шаг 2 из 3",
-            "Какой сценарий ближе?",
-            "Можно выбрать общий вариант — эксперт сам обозначит ограничения.",
+            "hair_type",
+            "Шаг 2 из 5",
+            "Какой у волос рисунок?",
+            "Это помогает подобрать очищение, кондиционирование и стайлинг.",
             (
-                FlowOption("Жирные корни", "oily_roots"),
-                FlowOption("Чувствительная кожа", "sensitive_scalp"),
-                FlowOption("Тонкие волосы", "fine"),
-                FlowOption("Пористые волосы", "porous"),
-                FlowOption("После осветления", "bleached"),
+                FlowOption("Прямые", "straight"),
+                FlowOption("Волнистые", "wavy"),
+                FlowOption("Кудрявые", "curly"),
+                FlowOption("Очень кудрявые", "coily"),
+                FlowOption("Не важно", "any"),
+                FlowOption("Не знаю", "unknown"),
+            ),
+        ),
+        FlowStep(
+            "scalp_type",
+            "Шаг 3 из 5",
+            "Как ведёт себя кожа головы?",
+            "Кожу головы оцениваем отдельно от длины.",
+            (
+                FlowOption("Нормальная", "normal"),
+                FlowOption("Быстро жирнится", "oily"),
+                FlowOption("Сухая", "dry"),
+                FlowOption("Чувствительная", "sensitive"),
+                FlowOption("Есть шелушение", "flaking"),
+                FlowOption("Не знаю", "unknown"),
+            ),
+        ),
+        FlowStep(
+            "hair_state",
+            "Шаг 4 из 5",
+            "Что происходило с длиной?",
+            "Окрашивание и нагрев меняют требования к уходу.",
+            (
+                FlowOption("Натуральная", "natural"),
+                FlowOption("Окрашенная", "colored"),
+                FlowOption("Осветлённая", "bleached"),
+                FlowOption("Повреждённая", "damaged"),
+                FlowOption("Частая горячая укладка", "heat"),
                 FlowOption("Не знаю", "unknown"),
             ),
         ),
         FlowStep(
             "budget",
-            "Шаг 3 из 3",
+            "Шаг 5 из 5",
             "Комфортный бюджет на одно средство",
             "Можно пропустить и посмотреть разные ценовые уровни.",
             (
@@ -196,25 +238,36 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="Кожа", callback_data="mode:skin"),
             InlineKeyboardButton(text="Волосы", callback_data="mode:hair"),
+            InlineKeyboardButton(text="Парфюм", callback_data="mode:perfume"),
         ],
-        [InlineKeyboardButton(text="Парфюм", callback_data="mode:perfume")],
-        [InlineKeyboardButton(text="Просто написать запрос", callback_data="free:text")],
-        [InlineKeyboardButton(text="Открыть сайт", url="https://krasavitsa-ai.ru/")],
+        [
+            InlineKeyboardButton(text="Написать запрос", callback_data="free:text"),
+            InlineKeyboardButton(text="Повторить последний", callback_data="repeat:last"),
+        ],
+        [InlineKeyboardButton(text="Сайт Красавицы", url="https://krasavitsa-ai.ru/")],
     ])
 
 
-def mode_inline_keyboard(mode: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Подобрать сразу", callback_data=f"direct:{mode}")],
-        [InlineKeyboardButton(text="Настроить подбор", callback_data=f"guide:{mode}")],
+def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKeyboardMarkup:
+    rows = [[
+        InlineKeyboardButton(text="Без анкеты", callback_data=f"direct:{mode}"),
+        InlineKeyboardButton(text="Настроить", callback_data=f"guide:{mode}"),
+    ]]
+    if has_saved_profile:
+        rows.append([InlineKeyboardButton(text="Мои сохранённые параметры", callback_data=f"saved:{mode}")])
+    rows.append(
         [InlineKeyboardButton(text="Главное меню", callback_data="menu:main")],
-    ])
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def result_inline_keyboard(mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Ещё подбор", callback_data=f"mode:{mode}")],
-        [InlineKeyboardButton(text="Сменить направление", callback_data="menu:main")],
+        [
+            InlineKeyboardButton(text="Ещё подбор", callback_data=f"mode:{mode}"),
+            InlineKeyboardButton(text="Мои параметры", callback_data=f"saved:{mode}"),
+        ],
+        [InlineKeyboardButton(text="Главное меню", callback_data="menu:main")],
     ])
 
 
@@ -240,10 +293,24 @@ def mode_text(mode: str) -> str:
     )
 
 
-def start_flow(user_id: int, mode: str) -> FlowSession:
-    session = FlowSession(mode=mode)
+def start_flow(user_id: int, mode: str, answers: dict[str, str] | None = None) -> FlowSession:
+    session = FlowSession(mode=mode, answers=deserialize_answers(mode, answers or {}))
     SESSIONS[user_id] = session
     return session
+
+
+def deserialize_answers(mode: str, values: dict[str, str]) -> dict[str, FlowOption]:
+    restored = {}
+    for step in FLOW_STEPS[mode]:
+        value = str(values.get(step.key, ""))
+        option = next((item for item in step.options if item.value == value), None)
+        if option:
+            restored[step.key] = option
+    return restored
+
+
+def serialize_answers(session: FlowSession) -> dict[str, str]:
+    return {key: option.value for key, option in session.answers.items()}
 
 
 def get_session(user_id: int, mode: str | None = None) -> FlowSession | None:
@@ -272,7 +339,7 @@ def flow_keyboard(session: FlowSession) -> InlineKeyboardMarkup:
     for index in range(0, len(options), 2):
         rows.append([
             InlineKeyboardButton(
-                text=option.label,
+                text=f"✓ {option.label}" if session.answers.get(step.key) == option else option.label,
                 callback_data=f"flow:{session.mode}:{session.step}:{option.value}",
             )
             for option in options[index:index + 2]
@@ -295,8 +362,9 @@ def choose_option(user_id: int, mode: str, step_index: int, value: str) -> tuple
     session.step = max(0, min(step_index, len(FLOW_STEPS[mode]) - 1))
     step = FLOW_STEPS[mode][session.step]
     option = next((item for item in step.options if item.value == value), None)
-    if option:
-        session.answers[step.key] = option
+    if option is None:
+        return session, False
+    session.answers[step.key] = option
     session.step += 1
     complete = session.step >= len(FLOW_STEPS[mode])
     if complete:
@@ -306,6 +374,8 @@ def choose_option(user_id: int, mode: str, step_index: int, value: str) -> tuple
 
 def skip_step(user_id: int, mode: str, step_index: int) -> tuple[FlowSession, bool]:
     session = get_session(user_id, mode) or start_flow(user_id, mode)
+    current_index = max(0, min(step_index, len(FLOW_STEPS[mode]) - 1))
+    session.answers.pop(FLOW_STEPS[mode][current_index].key, None)
     session.step = max(0, min(step_index + 1, len(FLOW_STEPS[mode]) - 1))
     complete = step_index + 1 >= len(FLOW_STEPS[mode])
     return session, complete
@@ -314,9 +384,26 @@ def skip_step(user_id: int, mode: str, step_index: int) -> tuple[FlowSession, bo
 def previous_step(user_id: int, mode: str, step_index: int) -> FlowSession:
     session = get_session(user_id, mode) or start_flow(user_id, mode)
     session.step = max(0, step_index - 1)
-    current_key = FLOW_STEPS[mode][session.step].key
-    session.answers.pop(current_key, None)
     return session
+
+
+def saved_profile_text(session: FlowSession) -> str:
+    selected = []
+    for step in FLOW_STEPS[session.mode]:
+        option = session.answers.get(step.key)
+        if option:
+            selected.append(f"• <b>{step.title}</b> — {option.label}")
+    details = "\n".join(selected) if selected else "Параметры пока не сохранены."
+    return f"{MODE_ICONS[session.mode]} <b>{MODE_LABELS[session.mode]} · мои параметры</b>\n\n{details}"
+
+
+def saved_profile_keyboard(mode: str, has_answers: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if has_answers:
+        rows.append([InlineKeyboardButton(text="Подобрать по этим параметрам", callback_data=f"use_saved:{mode}")])
+    rows.append([InlineKeyboardButton(text="Изменить ответы", callback_data=f"edit_saved:{mode}")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data=f"mode:{mode}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_query(session: FlowSession | None, mode: str, exploratory: bool = False) -> str:
@@ -341,27 +428,45 @@ def build_query(session: FlowSession | None, mode: str, exploratory: bool = Fals
     return base
 
 
-async def safe_edit(message: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> None:
+async def safe_edit(
+    message: Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    max_retry_wait: float = 3.0,
+) -> bool:
     try:
         await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+        return True
     except TelegramRetryAfter as error:
-        await asyncio.sleep(min(float(error.retry_after), 1.5))
+        retry_after = float(error.retry_after)
+        if retry_after > max_retry_wait:
+            return False
+        await asyncio.sleep(retry_after + 0.1)
         try:
             await message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-        except TelegramBadRequest:
-            pass
-    except TelegramBadRequest:
-        pass
+            return True
+        except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
+            return False
+    except (TelegramBadRequest, TelegramNetworkError):
+        return False
 
 
 async def animate_intro(message: Message) -> Message:
     await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    card = await message.answer("Краса…", reply_markup=ReplyKeyboardRemove())
-    await asyncio.sleep(0.24)
-    await safe_edit(card, "✦ <b>Красавица</b>\nПодбор становится личным…")
-    await asyncio.sleep(0.34)
-    await safe_edit(card, main_text(), main_inline_keyboard())
-    return card
+    card = await message.answer("К", reply_markup=ReplyKeyboardRemove())
+    for frame in ("Краса", "Красавица"):
+        await asyncio.sleep(0.55)
+        if not await safe_edit(card, frame, max_retry_wait=1.0):
+            break
+    await asyncio.sleep(0.45)
+    if await safe_edit(card, main_text(), main_inline_keyboard(), max_retry_wait=2.0):
+        return card
+    final_card = await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
+    try:
+        await card.delete()
+    except (TelegramBadRequest, TelegramNetworkError):
+        pass
+    return final_card
 
 
 SEARCH_PHASES = {
@@ -394,9 +499,12 @@ async def animate_search(status_message: Message, mode: str, done: asyncio.Event
 
 
 def all_callback_data() -> list[str]:
-    values = ["menu:main", "free:text"]
+    values = ["menu:main", "free:text", "repeat:last", "retry:last"]
     for mode, steps in FLOW_STEPS.items():
-        values.extend((f"mode:{mode}", f"direct:{mode}", f"guide:{mode}", f"finish:{mode}"))
+        values.extend((
+            f"mode:{mode}", f"direct:{mode}", f"guide:{mode}", f"finish:{mode}",
+            f"saved:{mode}", f"use_saved:{mode}", f"edit_saved:{mode}",
+        ))
         for index, step in enumerate(steps):
             values.extend(f"flow:{mode}:{index}:{option.value}" for option in step.options)
             values.extend((f"skip:{mode}:{index}", f"back:{mode}:{index}"))

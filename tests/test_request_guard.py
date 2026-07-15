@@ -1,5 +1,8 @@
 import importlib
 import os
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 
 os.environ.setdefault("BOT_TOKEN", "123:ABC")
@@ -49,3 +52,16 @@ def test_website_keyboard_points_to_project_site():
     keyboard = bot.website_keyboard()
 
     assert keyboard.inline_keyboard[0][0].url == bot.WEBSITE_URL
+
+
+def test_command_fallback_never_sends_unknown_command_to_ai():
+    message = SimpleNamespace(
+        text="/pick",
+        from_user=SimpleNamespace(id=77, username="tester"),
+        answer=AsyncMock(),
+    )
+
+    asyncio.run(bot.handle_text(message))
+
+    message.answer.assert_awaited_once()
+    assert "Красавица" in message.answer.await_args.args[0]

@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+import json
 
 import re
 
@@ -66,6 +67,31 @@ def init_db():
             created_at TEXT
         )
     """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS beauty_profiles (
+            user_id INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            answers_json TEXT NOT NULL DEFAULT '{}',
+            current_step INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, mode)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_beauty_state (
+            user_id INTEGER PRIMARY KEY,
+            active_mode TEXT,
+            last_query TEXT,
+            last_query_mode TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    try:
+        cur.execute("ALTER TABLE user_beauty_state ADD COLUMN last_query_mode TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -127,6 +153,88 @@ def get_user_profile(user_id: int):
     return {
         "skin_type": result[0],
         "budget": result[1],
+    }
+
+
+def save_beauty_profile(user_id: int, mode: str, answers: dict[str, str], current_step: int = 0) -> None:
+    payload = json.dumps(answers or {}, ensure_ascii=False, sort_keys=True)
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO beauty_profiles (user_id, mode, answers_json, current_step, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, mode) DO UPDATE SET
+            answers_json = excluded.answers_json,
+            current_step = excluded.current_step,
+            updated_at = excluded.updated_at
+    """, (user_id, mode, payload, max(0, int(current_step)), datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def get_beauty_profile(user_id: int, mode: str) -> dict | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT answers_json, current_step, updated_at FROM beauty_profiles WHERE user_id = ? AND mode = ?",
+        (user_id, mode),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        answers = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        answers = {}
+    return {
+        "answers": answers if isinstance(answers, dict) else {},
+        "current_step": max(0, int(row[1] or 0)),
+        "updated_at": row[2],
+    }
+
+
+def save_user_beauty_state(user_id: int, active_mode: str, last_query: str | None = None) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_beauty_state (user_id, active_mode, last_query, last_query_mode, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            active_mode = excluded.active_mode,
+            last_query = COALESCE(excluded.last_query, user_beauty_state.last_query),
+            last_query_mode = CASE
+                WHEN excluded.last_query IS NOT NULL THEN excluded.active_mode
+                ELSE user_beauty_state.last_query_mode
+            END,
+            updated_at = excluded.updated_at
+    """, (
+        user_id,
+        active_mode,
+        last_query,
+        active_mode if last_query is not None else None,
+        datetime.now().isoformat(),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_user_beauty_state(user_id: int) -> dict | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT active_mode, last_query, last_query_mode, updated_at FROM user_beauty_state WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "active_mode": row[0],
+        "last_query": row[1],
+        "last_query_mode": row[2],
+        "updated_at": row[3],
     }
 
 
