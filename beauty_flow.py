@@ -7,6 +7,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    ReplyKeyboardRemove,
 )
 
 
@@ -262,6 +263,7 @@ def mode_inline_keyboard(mode: str, has_saved_profile: bool = False) -> InlineKe
 
 def result_inline_keyboard(mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="♡ Сохранить подбор", callback_data="favorite:last")],
         [
             InlineKeyboardButton(text="✨ Новый подбор", callback_data=f"mode:{mode}"),
             InlineKeyboardButton(text="💾 Мои параметры", callback_data=f"saved:{mode}"),
@@ -473,10 +475,18 @@ async def animate_intro(
     panel_text: str | None = None,
     panel_keyboard: InlineKeyboardMarkup | None = None,
 ) -> Message:
-    welcome_caption = (
-        "✦ <b>Красавица</b>\n"
-        "Персональный подбор ухода за кожей, волосами и парфюмерии."
+    welcome_caption = panel_text or (
+        "✦ <b>Красавица — ваш beauty AI</b>\n\n"
+        "Подбираю уход за кожей и волосами, а ещё ароматы — с учётом запроса, бюджета и важных ограничений."
     )
+    try:
+        cleanup = await message.answer("Обновляю меню…", reply_markup=ReplyKeyboardRemove())
+        try:
+            await cleanup.delete()
+        except (AttributeError, TelegramBadRequest, TelegramNetworkError):
+            pass
+    except (TelegramBadRequest, TelegramNetworkError):
+        pass
     welcome_card = None
     if welcome_photo is not None:
         await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.UPLOAD_PHOTO)
@@ -485,7 +495,7 @@ async def animate_intro(
                 photo=welcome_photo,
                 caption=welcome_caption,
                 parse_mode="HTML",
-                reply_markup=reply_keyboard,
+                reply_markup=panel_keyboard or main_inline_keyboard(),
             )
         except TelegramRetryAfter as error:
             if float(error.retry_after) <= 3.0:
@@ -495,7 +505,7 @@ async def animate_intro(
                         photo=welcome_photo,
                         caption=welcome_caption,
                         parse_mode="HTML",
-                        reply_markup=reply_keyboard,
+                        reply_markup=panel_keyboard or main_inline_keyboard(),
                     )
                 except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
                     pass
@@ -506,22 +516,23 @@ async def animate_intro(
         welcome_card = await message.answer(
             welcome_caption,
             parse_mode="HTML",
-            reply_markup=reply_keyboard,
+            reply_markup=panel_keyboard or main_inline_keyboard(),
         )
-
-    await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-    return await message.answer(
-        panel_text or main_text(),
-        parse_mode="HTML",
-        reply_markup=panel_keyboard or main_inline_keyboard(),
-    )
+    return welcome_card
 
 
 SEARCH_PHASES = {
-    "skin": ("Читаю состояние кожи", "Сверяю ограничения", "Проверяю средства", "Собираю карточки"),
-    "hair": ("Разделяю кожу головы и длину", "Сверяю ограничения", "Проверяю средства", "Собираю карточки"),
-    "perfume": ("Собираю ароматный профиль", "Сравниваю направления", "Проверяю ароматы", "Собираю карточки"),
+    "skin": ("Разбираю состояние кожи и цель", "Сверяю ограничения и бюджет", "Проверяю средства и магазины", "Готовлю три точные карточки"),
+    "hair": ("Разделяю задачи кожи головы и длины", "Сверяю ограничения и бюджет", "Проверяю средства и магазины", "Готовлю три точные карточки"),
+    "perfume": ("Собираю ароматный профиль", "Сравниваю характеры и концентрации", "Проверяю ароматы и магазины", "Готовлю три точные карточки"),
 }
+
+SEARCH_HINTS = (
+    "Сначала понимаю задачу — без случайных советов.",
+    "Исключаю то, что конфликтует с запросом.",
+    "Оставляю только отдельные карточки товаров.",
+    "Изображения и цены готовятся одновременно.",
+)
 
 
 async def animate_search(
@@ -534,25 +545,23 @@ async def animate_search(
     tick = 0
     while not done.is_set():
         phase_index = min(tick, len(phases) - 1)
-        dots = "·" * ((tick % 3) + 1)
-        filled = "●" * (phase_index + 1)
-        empty = "○" * (len(phases) - phase_index - 1)
         text = (
-            f"{MODE_ICONS[mode]} <b>{MODE_LABELS[mode]}</b>\n\n"
-            f"{phases[phase_index]}{dots}\n"
-            f"<code>{filled}{empty}</code>"
+            "✦ <b>Красавица подбирает</b>\n\n"
+            f"{phases[phase_index]}\n"
+            f"<i>{SEARCH_HINTS[phase_index]}</i>\n\n"
+            f"<code>{phase_index + 1} / {len(phases)}</code>"
         )
         await status_message.bot.send_chat_action(chat_id=status_message.chat.id, action=ChatAction.TYPING)
         await safe_edit(status_message, text, keyboard)
         tick += 1
         try:
-            await asyncio.wait_for(done.wait(), timeout=1.8)
+            await asyncio.wait_for(done.wait(), timeout=2.2)
         except asyncio.TimeoutError:
             continue
 
 
 def all_callback_data() -> list[str]:
-    values = ["menu:main", "free:text", "repeat:last", "retry:last", "search:cancel"]
+    values = ["menu:main", "free:text", "repeat:last", "retry:last", "search:cancel", "favorite:last"]
     for mode, steps in FLOW_STEPS.items():
         values.extend((
             f"mode:{mode}", f"direct:{mode}", f"guide:{mode}", f"finish:{mode}",

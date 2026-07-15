@@ -62,8 +62,13 @@ def test_curated_catalog_is_final_fallback(monkeypatch):
     assert result["status"] == "complete"
     assert second["status"] == "complete"
     assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 1
-    assert all(product["marketplaces"][0]["href"].startswith("https://") for product in result["products"])
+    assert len(result["products"]) >= 3
+    assert all(product["priceRange"] for product in result["products"])
+    assert all(
+        link["href"].startswith("https://")
+        for product in result["products"]
+        for link in product["marketplaces"]
+    )
     assert shared.await_count == 1
     assert local.await_count == 1
 
@@ -80,7 +85,7 @@ def test_needs_input_becomes_a_safe_starter_selection(monkeypatch):
 
     assert result["status"] == "complete"
     assert result["methodology"] == "curated-fallback"
-    assert len(result["products"]) >= 1
+    assert len(result["products"]) >= 3
 
 
 def test_shared_curated_fallback_does_not_mask_working_local_ai(monkeypatch):
@@ -98,12 +103,14 @@ def test_shared_curated_fallback_does_not_mask_working_local_ai(monkeypatch):
     local_result = {
         "status": "complete",
         "products": [{"name": "Personal result"}],
-        "methodology": "grounded-v2",
+        "methodology": "grounded-v3",
     }
     local = AsyncMock(return_value=local_result)
     monkeypatch.setattr(ai_client, "_local_pipeline", local)
 
     result = asyncio.run(ai_client.ask_deepseek("Нужен аромат", "perfume"))
 
-    assert result is local_result
+    assert result["methodology"] == "grounded-v3"
+    assert result["products"][0]["name"] == "Personal result"
+    assert len(result["products"]) >= 3
     local.assert_awaited_once()

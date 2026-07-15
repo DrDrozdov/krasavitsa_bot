@@ -80,12 +80,12 @@ def test_mode_choices_use_clear_human_labels():
 
 
 def test_intro_without_photo_has_no_single_letter_placeholder():
-    welcome_card = SimpleNamespace()
+    cleanup_card = SimpleNamespace(delete=AsyncMock())
     panel_card = SimpleNamespace()
     message = SimpleNamespace(
         chat=SimpleNamespace(id=1),
         bot=SimpleNamespace(send_chat_action=AsyncMock()),
-        answer=AsyncMock(side_effect=[welcome_card, panel_card]),
+        answer=AsyncMock(side_effect=[cleanup_card, panel_card]),
     )
 
     result = asyncio.run(beauty_flow.animate_intro(message))
@@ -93,27 +93,26 @@ def test_intro_without_photo_has_no_single_letter_placeholder():
     assert result is panel_card
     assert message.answer.await_count == 2
     assert all(call.args[0] not in {"К", "Краса", "Красавица"} for call in message.answer.await_args_list)
-    assert "Красавица" in message.answer.await_args_list[0].args[0]
+    assert "Красавица" in message.answer.await_args_list[1].args[0]
 
 
-def test_intro_sends_photo_with_reply_keyboard_then_inline_panel():
+def test_intro_sends_one_photo_with_inline_actions_and_removes_old_reply_keyboard():
     final_photo_card = SimpleNamespace()
-    panel_card = SimpleNamespace()
+    cleanup_card = SimpleNamespace(delete=AsyncMock())
     message = SimpleNamespace(
         chat=SimpleNamespace(id=1),
         bot=SimpleNamespace(send_chat_action=AsyncMock()),
-        answer=AsyncMock(return_value=panel_card),
+        answer=AsyncMock(return_value=cleanup_card),
         answer_photo=AsyncMock(return_value=final_photo_card),
     )
 
     result = asyncio.run(beauty_flow.animate_intro(
         message,
         welcome_photo="welcome.png",
-        reply_keyboard="persistent-keyboard",
     ))
 
-    assert result is panel_card
+    assert result is final_photo_card
     message.answer_photo.assert_awaited_once()
     assert "Красавица" in message.answer_photo.await_args.kwargs["caption"]
-    assert message.answer_photo.await_args.kwargs["reply_markup"] == "persistent-keyboard"
-    assert message.answer.await_args.kwargs["reply_markup"].inline_keyboard
+    assert message.answer_photo.await_args.kwargs["reply_markup"].inline_keyboard
+    assert message.answer.await_count == 1

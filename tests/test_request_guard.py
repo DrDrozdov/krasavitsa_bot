@@ -67,10 +67,16 @@ def test_command_fallback_never_sends_unknown_command_to_ai():
     assert "Красавица" in message.answer.await_args.args[0]
 
 
-def test_main_reply_keyboard_is_persistent_and_contains_profile():
-    assert bot.main_menu.is_persistent is True
-    labels = [button.text for row in bot.main_menu.keyboard for button in row]
-    assert {"💧 Кожа", "💇‍♀️ Волосы", "🌸 Парфюм", "👤 Мой профиль"} <= set(labels)
+def test_main_navigation_is_inline_and_covers_three_directions():
+    keyboard = bot.main_inline_keyboard()
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert {"💧 Кожа", "💇‍♀️ Волосы", "🌸 Парфюм"} <= set(labels)
+
+
+def test_search_navigation_only_offers_cancel():
+    keyboard = bot.search_inline_keyboard()
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert callbacks == ["search:cancel"]
 
 
 def test_new_user_can_create_or_skip_profile(monkeypatch):

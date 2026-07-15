@@ -26,6 +26,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     KeyboardButton
 )
 
@@ -109,7 +110,7 @@ MODE_ASSET_PATHS = {
     "hair": BASE_DIR / "assets" / "hair-card-v1.png",
     "perfume": BASE_DIR / "assets" / "perfume-card-v1.png",
 }
-WELCOME_ASSET_PATH = BASE_DIR / "assets" / "welcome-v1.png"
+WELCOME_ASSET_PATH = BASE_DIR / "assets" / "welcome-v2.png"
 
 IMAGE_FETCH_TIMEOUT = 4
 IMAGE_SEARCH_TIMEOUT = 4
@@ -234,16 +235,22 @@ def has_saved_beauty_profile(user_id: int) -> bool:
 
 
 def welcome_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    intro = (
+        "✦ <b>Красавица — ваш персональный beauty AI</b>\n\n"
+        "Помогаю подобрать уход за кожей и волосами, а ещё найти аромат под настроение, повод и бюджет. "
+        "Учитываю чувствительность, привычки и ограничения, проверяю конкретные товары и показываю только отдельные карточки магазинов.\n\n"
+        "Можно написать запрос своими словами, пройти короткие вопросы или сохранить beauty-профиль — это необязательно."
+    )
     if has_saved_beauty_profile(user_id):
         return (
-            "<b>С возвращением</b>\n\nМожно использовать сохранённые параметры или начать новый подбор.",
+            intro + "\n\n<b>С возвращением 💗</b> Использовать сохранённые параметры или начать заново?",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Использовать мой профиль", callback_data="onboarding:use")],
                 [InlineKeyboardButton(text="Новый подбор", callback_data="onboarding:skip")],
             ]),
         )
     return (
-        "<b>Сделать подбор точнее?</b>\n\nМожно один раз создать beauty-профиль — выбранные параметры сохранятся. Это необязательно.",
+        intro + "\n\n<b>Хотите создать beauty-профиль?</b>",
         InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Создать профиль", callback_data="onboarding:create")],
             [InlineKeyboardButton(text="Продолжить без профиля", callback_data="onboarding:skip")],
@@ -261,7 +268,6 @@ async def start(message: Message):
     await animate_intro(
         message,
         welcome_photo=welcome_photo,
-        reply_keyboard=main_menu,
         panel_text=panel_text,
         panel_keyboard=panel_keyboard,
     )
@@ -348,7 +354,9 @@ def profile_modes_keyboard() -> InlineKeyboardMarkup:
 @dp.message(Command("pick"))
 async def pick_command(message: Message):
     save_user(user_id=message.from_user.id, username=message.from_user.username)
-    await message.answer("Фирменное меню закреплено под строкой ввода.", reply_markup=main_menu)
+    cleanup = await message.answer("Открываю меню…", reply_markup=ReplyKeyboardRemove())
+    with suppress(Exception):
+        await cleanup.delete()
     await message.answer(main_text(), parse_mode="HTML", reply_markup=main_inline_keyboard())
 
 
@@ -482,9 +490,15 @@ async def run_callback_search(callback: CallbackQuery, mode: str, query: str) ->
         return
     ACTIVE_MODES[callback.from_user.id] = mode
     save_user_beauty_state(callback.from_user.id, mode, query)
-    status_message = await render_panel(
-        callback.message,
-        f"{MODE_LABELS[mode]}\n\n✨ Начинаю персональный подбор…",
+    with suppress(Exception):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    status_message = await callback.message.answer(
+        "Начинаю подбор…",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await safe_edit(
+        status_message,
+        "✦ <b>Красавица подбирает</b>\n\nПонимаю ваш запрос и готовлю проверенные варианты.",
         search_inline_keyboard(),
     )
     await perform_search(
@@ -789,7 +803,7 @@ async def budget_1000(message: Message):
         "Сохранил твой бюджет: <b>до 1000 ₽</b> ✅\n\n"
         "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=main_inline_keyboard()
     )
 
 @dp.message(F.text == "до 3000 ₽")
@@ -799,7 +813,7 @@ async def budget_3000(message: Message):
         "Сохранил твой бюджет: <b>до 3000 ₽</b> ✅\n\n"
         "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=main_inline_keyboard()
     )
 
 @dp.message(F.text == "до 6000 ₽")
@@ -809,7 +823,7 @@ async def budget_6000(message: Message):
         "Сохранил твой бюджет: <b>до 6000 ₽</b> ✅\n\n"
         "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=main_inline_keyboard()
     )
 
 @dp.message(F.text == "без ограничений")
@@ -819,7 +833,7 @@ async def budget_unlimited(message: Message):
         "Сохранил твой бюджет: <b>без ограничений</b> 👑\n\n"
         "Теперь выбери направление и опиши задачу — бюджет будет учтён.",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=main_inline_keyboard()
     )
 
 @dp.message(F.text == "💄 Подобрать уход")
@@ -833,7 +847,7 @@ async def choose_care(message: Message):
         "☀️ <b>SPF защита</b> — солнцезащита\n"
         "📝 <b>Другое</b> — напиши свой вопрос",
         parse_mode="HTML",
-        reply_markup=scenarios_menu
+        reply_markup=mode_inline_keyboard("skin")
     )
 
 
@@ -858,7 +872,7 @@ async def budget(message: Message):
         "💎 <b>до 6000 ₽</b> — премиум\n"
         "👑 <b>без ограничений</b> — люкс",
         parse_mode="HTML",
-        reply_markup=budget_menu
+        reply_markup=profile_modes_keyboard()
     )
 
 
@@ -903,7 +917,7 @@ async def set_skin_type(message: Message):
         f"Сохранил твой тип кожи: <b>{html.escape(skin_type)}</b> ✅\n\n"
         "Теперь напиши, что беспокоит кожу.",
         parse_mode="HTML",
-        reply_markup=main_menu
+        reply_markup=main_inline_keyboard()
     )
 
 @dp.callback_query(F.data.startswith("feedback_good:"))
@@ -961,6 +975,16 @@ async def add_favorite(message: Message):
 
     fav_id = save_favorite(message.from_user.id, last["id"], title=None)
     await message.answer("Сохранил подбор в избранное ✅")
+
+
+@dp.callback_query(F.data == "favorite:last")
+async def callback_add_favorite(callback: CallbackQuery):
+    last = get_last_recommendation(callback.from_user.id)
+    if not last:
+        await callback.answer("Сначала сделайте подбор", show_alert=True)
+        return
+    save_favorite(callback.from_user.id, last["id"], title=None)
+    await callback.answer("Подбор сохранён в избранное 💗")
 
 
 @dp.message(F.text == "📂 Избранное")
@@ -1190,8 +1214,9 @@ async def perform_search(
     if status_message is None:
         status_message = await message.answer(
             f"✨ Проверяю запрос: {MODE_LABELS[mode].lower()}…",
-            reply_markup=search_inline_keyboard(),
+            reply_markup=ReplyKeyboardRemove(),
         )
+        await safe_edit(status_message, f"✦ <b>Красавица подбирает</b>\n\nПонимаю ваш запрос и готовлю проверенные варианты.", search_inline_keyboard())
     animation_done = asyncio.Event()
     animation_task = asyncio.create_task(
         animate_search(status_message, mode, animation_done, search_inline_keyboard())
@@ -1215,6 +1240,7 @@ async def perform_search(
             ai_request += "\n\nКонтекст профиля, который тоже нужно учесть:\n" + "\n".join(profile_notes)
         data = await ask_deepseek(ai_request, mode=mode)
         summary = _as_bot_text(data.get("summary"))
+        insight = _as_bot_text(data.get("insight"))
         follow_up = _as_bot_text(data.get("followUpQuestion"))
         products = data.get("products") if isinstance(data.get("products"), list) else []
 
@@ -1235,19 +1261,16 @@ async def perform_search(
             return
 
         answer = f"✨ <b>Красавица · {html_text(MODE_LABELS[mode])}</b>\n\n"
-        answer += f"<b>Что учла:</b>\n{html_text(summary)}\n\n"
-        answer += "<b>Проверенные варианты:</b>\n"
-        for product in products[:4]:
-            if not isinstance(product, dict):
-                continue
-            name = _as_bot_text(product.get("name"))
-            category = _as_bot_text(product.get("category"))
-            answer += f"• <b>{html_text(name)}</b>\n"
-            if category:
-                answer += f"  <i>{html_text(category)}</i>\n"
+        answer += f"<b>О вашем запросе</b>\n{html_text(summary)}"
+        if insight:
+            answer += f"\n\n💡 <b>Полезно знать</b>\n{html_text(insight)}"
+        answer += f"\n\nПодготовила <b>{min(4, len(products))} варианта</b>. Они появятся ниже сразу один за другим."
 
         await render_panel(status_message, answer, search_inline_keyboard())
-        rec_id = save_recommendation(user_id=requester_id, user_request=text_to_process, answer=answer)
+        saved_answer = answer + "\n\n" + "\n".join(
+            f"• {_as_bot_text(product.get('name'))}" for product in products[:4] if isinstance(product, dict)
+        )
+        rec_id = save_recommendation(user_id=requester_id, user_request=text_to_process, answer=saved_answer)
         feedback_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="👍 Полезно", callback_data=f"feedback_good:{rec_id}"),
             InlineKeyboardButton(text="👎 Не подошло", callback_data=f"feedback_bad:{rec_id}"),
@@ -1271,7 +1294,7 @@ async def perform_search(
                 if isinstance(item, dict) and is_http_url(_as_bot_text(item.get("href")))
             }
             product_id = save_recommended_product(user_id=requester_id, product_name=product_name)
-            link_buttons = [InlineKeyboardButton(text=f"🛍️ {label}", url=url) for label, url in list(links.items())[:6]]
+            link_buttons = [InlineKeyboardButton(text=f"🛍️ {label}", url=url) for label, url in list(links.items())[:8]]
             buttons = [link_buttons[index:index + 2] for index in range(0, len(link_buttons), 2)]
             buttons.append([
                 InlineKeyboardButton(text="👍 Подходит", callback_data=f"product_good:{product_id}"),
@@ -1287,6 +1310,7 @@ async def perform_search(
                 usage=product_usage,
                 tradeoffs=tradeoffs,
                 price_range=price_range,
+                has_market_links=bool(links),
             )
             product_card_tasks.append(asyncio.create_task(prepare_product_card(
                 product_name=product_name,
@@ -1297,8 +1321,9 @@ async def perform_search(
                 mode=mode,
             )))
 
-        for task in asyncio.as_completed(product_card_tasks):
-            await send_prepared_product_card(message, await task)
+        prepared_cards = await asyncio.gather(*product_card_tasks)
+        for card in prepared_cards:
+            await send_prepared_product_card(message, card)
         await safe_edit(status_message, answer, result_inline_keyboard(mode))
         await message.answer("Оцени подбор — так «Красавица» станет точнее.", reply_markup=feedback_keyboard)
 
@@ -1336,6 +1361,56 @@ async def perform_search(
             await animation_task
         if ACTIVE_SEARCH_TASKS.get(requester_id) is current_task:
             ACTIVE_SEARCH_TASKS.pop(requester_id, None)
+
+
+@dp.message(F.voice)
+async def handle_voice(message: Message):
+    if not message.voice or message.voice.file_size and message.voice.file_size > 20 * 1024 * 1024:
+        await message.answer("Голосовое слишком большое. Запишите короткий запрос до одной минуты.", reply_markup=main_inline_keyboard())
+        return
+    status = await message.answer("🎙️ Слушаю запрос…", reply_markup=ReplyKeyboardRemove())
+    try:
+        audio = io.BytesIO()
+        await message.bot.download(message.voice, destination=audio)
+        audio.seek(0)
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+        async with httpx.AsyncClient(timeout=35, follow_redirects=True) as client:
+            response = await client.post(
+                urljoin(WEBSITE_URL, "/api/transcribe"),
+                files={"file": ("beauty-request.ogg", audio.getvalue(), "audio/ogg")},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        transcript = _as_bot_text(payload.get("text") if isinstance(payload, dict) else "")
+        if not transcript:
+            raise ValueError("EMPTY_TRANSCRIPT")
+        if not is_cosmetic_request(transcript):
+            await render_panel(
+                status,
+                "🎙️ <b>Я услышала:</b>\n" + html_text(transcript) + "\n\n" + html_text(build_offtopic_reply()),
+                main_inline_keyboard(),
+            )
+            return
+        mode = detect_mode(transcript) or ACTIVE_MODES.get(message.from_user.id, "skin")
+        await safe_edit(
+            status,
+            f"🎙️ <b>Я услышала:</b> {html_text(transcript)}\n\nНачинаю подбор.",
+            search_inline_keyboard(),
+        )
+        await perform_search(
+            message=message,
+            requester_id=message.from_user.id,
+            requester_username=message.from_user.username,
+            text_to_process=transcript,
+            mode=mode,
+            status_message=status,
+        )
+    except (httpx.HTTPError, ValueError, OSError):
+        await render_panel(
+            status,
+            "Не удалось разобрать голосовое. Можно записать ещё раз или написать запрос текстом.",
+            main_inline_keyboard(),
+        )
 
 
 @dp.message(F.text)
@@ -2095,6 +2170,7 @@ def build_product_caption(
     usage: str = "",
     tradeoffs: list | None = None,
     price_range: str = "",
+    has_market_links: bool = True,
 ) -> str:
     emoji = get_category_emoji(product_category)
     category_text = html_text(product_category or "Средство")
@@ -2108,7 +2184,10 @@ def build_product_caption(
     clean_tradeoffs = [html_text(item) for item in (tradeoffs or []) if str(item or "").strip()]
     if clean_tradeoffs:
         caption += f"\n\n⚠️ <b>Учесть:</b> {(' · '.join(clean_tradeoffs))}"
-    caption += "\n\n🛍️ Ниже — только проверенные отдельные карточки товара."
+    if has_market_links:
+        caption += "\n\n🛍️ Ниже — только проверенные отдельные карточки товара."
+    else:
+        caption += "\n\n🛍️ Прямые карточки магазинов сейчас не подтвердились — поэтому не показываю случайную ссылку."
 
     return caption
 

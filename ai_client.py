@@ -18,7 +18,7 @@ load_dotenv(BASE_DIR / ".env")
 MODES = {"skin", "hair", "perfume"}
 DEFAULT_ALLOWED_HOSTS = {
     "goldapple.ru", "letu.ru", "rivegauche.ru", "wildberries.ru",
-    "market.yandex.ru", "tsum.ru",
+    "market.yandex.ru", "ozon.ru", "tsum.ru",
 }
 
 _SHARED_ENGINE_RETRY_AT = 0.0
@@ -78,6 +78,44 @@ def _score(value) -> int:
         return max(40, min(99, round(float(value))))
     except (TypeError, ValueError):
         return 60
+
+
+def _estimated_price_range(mode: str, category: str) -> str:
+    value = str(category or "").lower()
+    if mode == "perfume":
+        return "3 000–12 000 ₽" if "набор" in value or "мини" in value else "7 000–28 000 ₽"
+    if mode == "hair":
+        return "800–3 500 ₽" if "шамп" in value else "1 200–5 500 ₽"
+    return "1 200–3 500 ₽" if "spf" in value or "солнц" in value else "900–4 500 ₽"
+
+
+def _ensure_complete_result(data: dict, mode: str, minimum: int = 3) -> dict:
+    if data.get("status") != "complete":
+        return data
+    fallback = curated_fallback(mode)
+    products = data.get("products") if isinstance(data.get("products"), list) else []
+    combined = [item for item in products if isinstance(item, dict)] + fallback["products"]
+    result = []
+    seen = set()
+    for raw in combined:
+        product = dict(raw)
+        name = _as_text(product.get("name"), 180)
+        key = re.sub(r"\s+", " ", name.lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        product["priceRange"] = _as_text(product.get("priceRange"), 80) or _estimated_price_range(
+            mode, _as_text(product.get("category"), 100)
+        )
+        links = product.get("marketplaces") if isinstance(product.get("marketplaces"), list) else []
+        product["marketplaces"] = links[:8]
+        result.append(product)
+        if len(result) >= max(minimum, 4):
+            break
+    output = dict(data)
+    output["products"] = result
+    output["insight"] = _as_text(data.get("insight"), 500) or fallback["insight"]
+    return output
 
 
 def _extract_model_json(response_json: dict) -> dict:
@@ -249,6 +287,7 @@ def _link_label(url: str, fallback: str) -> str:
     labels = {
         "goldapple": "Золотое Яблоко", "letu": "Лэтуаль", "rivegauche": "Рив Гош",
         "wildberries": "Wildberries", "market.yandex": "Яндекс Маркет", "tsum": "ЦУМ",
+        "ozon": "Ozon",
     }
     return next((label for marker, label in labels.items() if marker in host), fallback or "Карточка товара")
 
@@ -261,7 +300,7 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
         return None
     proposed = []
     retailers = raw.get("retailer_urls") if isinstance(raw.get("retailer_urls"), list) else []
-    for item in retailers[:6]:
+    for item in retailers[:8]:
         if isinstance(item, dict):
             proposed.append((_as_text(item.get("label"), 40), _as_text(item.get("url"), 700), "marketplace"))
     verified = await asyncio.gather(*[_verify_url(client, name, url) for _, url, _ in proposed])
@@ -278,7 +317,7 @@ async def _verify_product(client: httpx.AsyncClient, raw: dict) -> dict | None:
         "matchScore": _score(raw.get("match_score")),
         "usage": _as_text(raw.get("usage"), 400),
         "tradeoffs": _as_list(raw.get("tradeoffs"), 4),
-        "marketplaces": links[:6],
+        "marketplaces": links[:8],
     }
 
 
@@ -291,9 +330,9 @@ async def _local_pipeline(user_text: str, mode: str) -> dict:
         decision = "ready"
         summary = summary or "Пользователь хочет посмотреть разные направления без жёстких ограничений."
     if decision in {"clarify", "decline"}:
-        return {"status": "needs_input", "mode": mode, "summary": summary, "followUpQuestion": question or "Уточни цель, ограничения и бюджет.", "products": [], "methodology": "grounded-v2"}
+        return {"status": "needs_input", "mode": mode, "summary": summary, "followUpQuestion": question or "Уточни цель, ограничения и бюджет.", "products": [], "methodology": "grounded-v3"}
     if decision == "safety":
-        return {"status": "safety_redirect", "mode": mode, "summary": summary, "followUpQuestion": question or "При таких симптомах безопаснее обратиться к профильному врачу.", "products": [], "methodology": "grounded-v2"}
+        return {"status": "safety_redirect", "mode": mode, "summary": summary, "followUpQuestion": question or "При таких симптомах безопаснее обратиться к профильному врачу.", "products": [], "methodology": "grounded-v3"}
 
     profile = triage.get("profile") if isinstance(triage.get("profile"), dict) else {}
     candidates = await _call_model(
@@ -306,7 +345,7 @@ async def _local_pipeline(user_text: str, mode: str) -> dict:
         checked = await asyncio.gather(*[_verify_product(client, item) for item in raw_products[:8] if isinstance(item, dict)])
     products = [item for item in checked if item]
     if not products:
-        return {"status": "no_verified_products", "mode": mode, "summary": "Не удалось подтвердить отдельные карточки предложенных товаров, поэтому я не показываю вымышленные ссылки.", "followUpQuestion": "Уточни бюджет, страну покупки или 1–2 знакомых бренда.", "products": [], "methodology": "grounded-v2"}
+        return {"status": "no_verified_products", "mode": mode, "summary": "Не удалось подтвердить отдельные карточки предложенных товаров, поэтому я не показываю вымышленные ссылки.", "followUpQuestion": "Уточни бюджет, страну покупки или 1–2 знакомых бренда.", "products": [], "methodology": "grounded-v3"}
 
     try:
         review = await _call_model(
@@ -335,7 +374,7 @@ async def _local_pipeline(user_text: str, mode: str) -> dict:
     except ValueError:
         products.sort(key=lambda item: item["matchScore"], reverse=True)
 
-    return {"status": "complete", "mode": mode, "summary": summary, "products": products[:4], "methodology": "grounded-v2"}
+    return {"status": "complete", "mode": mode, "summary": summary, "products": products[:4], "methodology": "grounded-v3"}
 
 
 async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
@@ -350,7 +389,7 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
                 and shared.get("products")
                 and shared.get("methodology") != "curated-fallback"
             ):
-                return shared
+                return _ensure_complete_result(shared, mode)
             if shared.get("status") == "safety_redirect":
                 return shared
             if shared.get("status") == "needs_input":
@@ -365,7 +404,7 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
         try:
             local = await _local_pipeline(user_text, mode)
             if local.get("status") == "complete" and local.get("products"):
-                return local
+                return _ensure_complete_result(local, mode)
             if local.get("status") == "safety_redirect":
                 return local
             if local.get("status") == "needs_input":
@@ -376,4 +415,4 @@ async def ask_deepseek(user_text: str, mode: str = "skin") -> dict:
                 )
         except ValueError:
             _LOCAL_ENGINE_RETRY_AT = time.monotonic() + ENGINE_CIRCUIT_SECONDS
-    return curated_fallback(mode)
+    return _ensure_complete_result(curated_fallback(mode), mode)
